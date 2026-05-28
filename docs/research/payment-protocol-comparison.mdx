@@ -1,0 +1,211 @@
+---
+sidebar_position: 0
+description: 对标主流支付协议，深度分析各协议架构和文档体系的对比报告
+---
+
+# Payment Protocol Architecture Comparison
+
+> **研究范围**: Stripe · Open Payments (Interledger) · Solana Pay · Open Banking UK · Lightning Network (BOLT) · UPI · Web Monetization · SWIFT/ISO 20022 · FedNow · Alipay/WeChat Pay
+>
+> **目标**: 为 ItPay Protocol 提供协议架构和文档体系的设计参考
+
+---
+
+## 一、各协议架构总览
+
+### 1. Stripe API — 开发者优先的 REST API 标杆
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | REST API（同步 + Webhook） |
+| **参与方模型** | 三方：Merchant ↔ Stripe ↔ Card Networks → Issuing Bank |
+| **资金流** | Customer Bank → Card Network → Stripe → Merchant Bank（Stripe 托管资金） |
+| **数据流** | 卡号 → Stripe Elements/API → Tokenize → Networks |
+| **文档架构** | 三层导航：Guides / API Reference / SDKs |
+| **设计哲学** | Developer-first, idempotency keys, PCI DSS via tokenization, webhook-driven state machines |
+| **核心对象** | PaymentIntent (6-state machine), Charge, Customer, Refund, Subscription, Invoice |
+| **唯一特色** | LLM Copy 按钮 · Markdoc 驱动 · AI Assistant · 版本 Header 切换 · 9 种语言示例 |
+
+### 2. Open Payments (Interledger) — 互联网分层支付协议
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | REST API Standard + Transport Layer Protocol (ILPv4) |
+| **参与方模型** | Sender ↔ Connectors (routers) ↔ Receiver, 底层对接各 Ledger (bank/blockchain/mobile money) |
+| **资金流** | 分层: 上层 (Open Payments) 是 RESTful API 下达支付指令, 下层 (ILPv4) 是 packet-switched routing, 最终 Settlement 在各自 Ledger 完成 |
+| **数据流** | ILP packets (含金额+目标地址) → Connectors 逐跳转发 (HTLC) |
+| **文档架构** | 三层: Concepts / SDKs / Guides / API Specifications (独立于主站) |
+| **设计哲学** | 互联网风格分层 (像 TCP/IP), 跨任意支付网络互操作, Wallet Address 作为匿名标识 |
+| **核心创新** | **Wallet Address** (`$wallet.example/alice$`) · **Open Payments** (应用层 REST) · **Web Monetization** (浏览器流式支付) |
+| **唯一特色** | Test Wallet + Boutique 交互式 Demo · Penny switching (最小 $0.0001) |
+
+### 3. Solana Pay — 区块链去中心化支付
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | 区块链 Transaction 协议 (URL scheme + SDK) |
+| **参与方模型** | Payer (Wallet) ↔ Merchant (收单) ↔ Solana Network (Validator 验证) |
+| **资金流** | Payer Wallet → Solana TX (USDC/SOL) → Merchant Wallet (400ms finality) |
+| **数据流** | QR Code / URL (含 amount + recipient + memo) → Wallet 签名 → Validator 打包 |
+| **文档架构** | 极简扁平: 5 个顶级页面, 无深度导航 |
+| **设计哲学** | Permissionless, 无中介, 低手续费 (<$0.001), 稳定币结算 |
+| **核心对象** | Transaction Request (HTTP 驱动), Transfer Request (URL 驱动) |
+
+### 4. Open Banking UK — 监管驱动的开放标准
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | 监管框架 + REST API (OpenAPI/Swagger) |
+| **参与方模型** | 三方: **ASPSP** (银行) ↔ **TPP** (第三方) ↔ **TSP** (技术服务商), 上层 PSD2 监管 |
+| **资金流** | TPP 发起支付指令 → ASPSP 执行 → 银行系统结算 (SEPA) |
+| **数据流** | OAuth 2.0 + OpenID Connect 授权 → Read/Write API (AIS/PIS) |
+| **文档架构** | Multi-version (v3.1.x, v4.0.x), OpenAPI/Swagger 下载, 独立 Security Profile |
+| **设计哲学** | 客户数据权回归用户, 竞争促进创新, FAPI (Financial-grade API) 安全标准 |
+| **核心创新** | **VRP** (Variable Recurring Payments) · 认证计划 · Conformance Testing · Customer Experience Guidelines |
+
+### 5. Lightning Network — 离线通道支付协议
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | Layer-2 协议 (BOLT 规范, 类似 IETF RFC) |
+| **参与方模型** | Sender ↔ Routing Nodes (通道中介) ↔ Receiver, 底层依赖 Bitcoin 主链 |
+| **资金流** | 通道内余额更新 (off-chain), 最终结算上链 (channel close) |
+| **数据流** | HTLC 提案 → Onion Routing (加密多跳) → 逐跳确认 |
+| **文档架构** | BOLT 规范 (bolt01-bolt12), 按功能拆分为独立 RFC 文档, 每个 BOLT 一份 markdown |
+| **设计哲学** | 即时结算, 微支付 (<1 sat), 低费用, 去中心化路由, 高扩展性 |
+| **核心规范** | BOLT #1-12: 基协议, 点对点消息, 路由, Onion 路由, HTLC, 通道, 等 |
+
+### 6. UPI (Unified Payments Interface) — 国家级移动支付协议
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | 实时支付协议 (mobile-first, IMPS 底层) |
+| **参与方模型** | 四方: Payer PSP ↔ NPCI (中央清算) ↔ Payee PSP ↔ Banks |
+| **资金流** | Payer Bank → IMPS (NPCI) → Payee Bank (24x7 实时) |
+| **数据流** | Payer 输入 VPA → PSP 发请求 → NPCI → Bank 确认 |
+| **文档架构** | NPCI API Specs (XML/JSON), 开发者 Portal, 认证用例, Reference App (Android) |
+| **设计哲学** | 开放 API, 无专有卡, VPA 抽象手机号为 ID, 2FA (PIN+设备), 24x7 实时结算 |
+| **核心创新** | **VPA** (虚拟支付地址), QR 码标准, Request for Payment |
+
+### 7. Web Monetization — 浏览器流式支付标准
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | W3C Web API + Interledger (底层) |
+| **参与方模型** | User (浏览器) ↔ Website Publisher ↔ SPSP Provider (ILP Connector) |
+| **资金流** | 持续流式微支付 (per-second), 通过 ILP 路由 |
+| **数据流** | `<meta name="monetization">` 标签 → 浏览器扩展 → ILP 支付流 |
+| **文档架构** | 单页 Proposal Spec, API 参考, 集成指南, 社区资源 |
+| **设计哲学** | 去广告化内容变现, 隐私保护, pay-per-second |
+
+### 8. SWIFT / ISO 20022 — 金融消息标准
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | 金融消息标准 (XML-based) |
+| **参与方模型** | Sender Bank ↔ Correspondent Banks ↔ Receiver Bank, 通过 SWIFTNet |
+| **资金流** | 消息层 (MT/MX) 携带支付指令, 实际结算通过 Correspondent Banking (nostro/vostro) |
+| **数据流** | FIN 消息 / ISO 20022 XML → SWIFTNet → 目标银行 |
+| **文档架构** | SWIFT 标准文档 (MT 103/202, MX pacs.008/009), ISO 20022 仓库 (XML Schema + 业务流程图) |
+| **设计哲学** | 标准化, 安全, 可追溯, 高价值/跨境, 正向 ISO 20022 迁移 |
+
+### 9. FedNow — 美国即时支付系统
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | 实时总额结算 (RTGS) |
+| **参与方模型** | Originating FI ↔ Federal Reserve ↔ Receiving FI |
+| **资金流** | 中央银行储备金即时借贷 (settlement finality) |
+| **数据流** | ISO 20022 消息 → FedNow Service |
+| **文档架构** | FedNow 服务描述, 消息规范 (ISO 20022 衍生), 实施指南, 认证测试 |
+| **设计哲学** | 24x7x365 即时结算, 美国国内, 与 RTP 互操作 |
+
+### 10. Alipay / WeChat Pay — 中国支付生态
+
+| 维度 | 说明 |
+|------|------|
+| **协议类型** | 半开放 API + 封闭生态系统 |
+| **参与方模型** | Consumer ↔ Alipay/WeChat (聚合收单) ↔ Merchant |
+| **资金流** | Consumer Bank → Alipay/WeChat (托管账户) → Merchant Bank (T+1 结算) |
+| **数据流** | QR Code (消费者被扫/主扫) → 支付指令 → 通道处理 |
+| **文档架构** | 开放平台开发者文档, API 参考, SDK 下载, 沙箱环境, 产品指南 |
+| **设计哲学** | 封闭生态 (资金托管), 二维码为王, 已支付+担保交易模式 |
+
+---
+
+## 二、架构模型对比
+
+### 2.1 参与方数量与角色
+
+| 协议 | 参与方数量 | 核心角色 | 资金是否托管 |
+|------|-----------|---------|------------|
+| Stripe | 3-4 | Merchant - Stripe - Network - Bank | ✅ (Stripe 托管) |
+| ItPay Protocol | **4** | Payer - Payee - Channel - Platform | ❌ (Platform 不碰钱) |
+| Open Payments | 3+ | Sender - Connector - Receiver | ❌ (Ledger 对外结算) |
+| Solana Pay | 2 | Payer - Merchant | ❌ (区块链直达) |
+| Open Banking | 3 | ASPSP - TPP - TSP | ❌ (银行执行) |
+| Lightning | 2+ | Sender - Routing Nodes - Receiver | ❌ (通道内余额) |
+| UPI | 4 | Payer PSP - NPCI - Payee PSP - Bank | ❌ (银行直达) |
+| Web Monetization | 3 | Browser - Publisher - SPSP Provider | ❌ (ILP 流式) |
+| SWIFT | 2+ | Sender Bank - Corr Banks - Receiver Bank | ❌ (消息模式) |
+| Alipay/WeChat | 3 | Consumer - Platform - Merchant | ✅ (平台托管) |
+| FedNow | 2 | Originating FI - Receiving FI | ❌ (央行 RTGS) |
+
+### 2.2 核心设计维度对比
+
+| 维度 | Stripe | ItPay Protocol | Open Payments | UPI | Lightning |
+|------|--------|----------------|---------------|-----|-----------|
+| **Money/Data 解耦** | ❌ 统一 | ✅ 解耦 | ✅ 分层 | ✅ 消息驱动 | ✅ 链下/链上分离 |
+| **Channel 无关** | ❌ 卡为主 | ✅ 插件式 | ✅ 任意 Ledger | ❌ IMPS 底层 | ❌ Bitcoin 底层 |
+| **Agent-first** | ❌ 人为主 | ✅ 原生支持 | ❌ 人为主 | ❌ 人为主 | ❌ 人为主 |
+| **开放标准** | ❌ 闭源 | ✅ Apache 2.0 | ✅ 开源 | ✅ 开放 API | ✅ 开源 |
+| **二维码原生** | ❌ | ✅ 是 | ❌ | ✅ 是 | ❌ |
+
+### 2.3 文档结构对比
+
+| 特性 | Stripe | Open Payments | Solana Pay | Open Banking UK | ItPay Protocol |
+|------|--------|---------------|------------|-----------------|----------------|
+| **导航深度** | 3 层折叠 | 3 层折叠 | 2 层扁平 | 2 层 Tabs | 3 层折叠 |
+| **API 格式** | 内嵌 Reference + 多语言 | OpenAPI 独立 | SDK Reference | Swagger 下载 | 内嵌 Stripe 风格 |
+| **架构模型** | PaymentIntent 状态机 | TCP/IP 分层 | URL Scheme + Wallet | 3-party 监管 | 4-party + 2-layer |
+| **版本管理** | API Version Header | 无 | 无 | Multi-version 下拉 | 日期版本 (2025-06-01) |
+| **AI 友好** | LLM Copy · AI Assistant | SDK 示例 | GitHub SDK | 认证 Portal | llms.txt · Mermaid 图 |
+| **交互式 Demo** | Stripe Assistant | Test Wallet/Boutique | ❌ | Certification Portal | 无 (计划中) |
+| **Spec/Doc 分离** | ❌ 混合 | ❌ 混合 | ❌ 混合 | ❌ 混合 | ✅ MCP 风格分离 |
+
+---
+
+## 三、核心启示 — 对 ItPay Protocol 的指导意义
+
+### 3.1 ItPay Protocol 的差异化优势
+
+ItPay Protocol 是目前唯一同时满足以下条件的支付协议：
+
+1. **Money/Data 完全解耦** → Platform 不碰钱，无托管风险
+2. **Channel-agnostic 插件式架构** → 可对接任何支付通道（QR/Link/Invoice/NFC/Crypto）
+3. **AI Agent-first 原生设计** → HTTP 402 语义 + MCP 工具调用 + Webhook 状态机
+4. **四角模型** → 比 Stripe/UPI 更清晰的职责分离
+
+对标协议中，**Open Payments (ILP)** 最接近 ItPay 的设计哲学（分层 + 开源 + 通道无关），但 ILP 缺乏 QR 原生和 Agent-first 设计。
+
+### 3.2 文档可借鉴的最佳实践
+
+| 来源 | 最佳实践 | ItPay 实现状态 |
+|------|---------|---------------|
+| Stripe | LLM Copy 按钮 | ✅ llms.txt 已实现 |
+| Stripe | 多语言代码示例 | ✅ Go + TypeScript |
+| Stripe | 状态机图示 (Mermaid) | ✅ 所有核心对象 |
+| Stripe | API 版本 Header 切换 | ✅ 日期版本 (2025-06-01) |
+| MCP (非支付) | Spec/Doc 分离 + RFC2119 | ✅ 已实现 |
+| Open Banking | Multi-version 系统 | ✅ 版本生命周期文档 |
+| Lightning | BOLT 式 RFC 编号规范 | 可强化 (当前编号较松散) |
+| Open Payments | Test Wallet Demo | 计划中 |
+| UPI | VPA 抽象 + QR 码 | ✅ QR-native by design |
+| Stripe | Error Code 类型 + 描述 | ✅ 60+ 错误码, 9 大类 |
+
+### 3.3 下一步可改进方向
+
+1. **交互式 Demo** — 类似 Open Payments 的 Test Wallet, 让开发者体验支付流程
+2. **BOLT 式规范编号** — 为每个核心能力分配规范编号 (ITP-001 ~ ITP-009)
+3. **OpenAPI/Swagger 导出** — 从当前 Stripe 风格文档自动生成 OpenAPI 规范
+4. **集成测试沙箱** — 上线沙箱环境供开发者测试集成
