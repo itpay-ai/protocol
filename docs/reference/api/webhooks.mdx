@@ -1,0 +1,447 @@
+---
+title: Webhooks API
+sidebar_label: Webhooks
+description: Stripe-style API reference for webhook endpoints — create, retrieve, list, update, and delete webhook endpoints with event type reference, signature verification, and retry policy.
+---
+
+# Webhooks API
+
+Webhooks provide real-time notifications about events in your ItPay account. Configure webhook endpoints to receive POST requests when events occur, such as successful payments, failed charges, subscription renewals, and refund completions.
+
+## POST /v1/webhook_endpoints
+
+Create a new webhook endpoint.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | string | yes | HTTPS URL where events will be sent |
+| `events` | `array<string>` | yes | List of event types to subscribe to. Use `*` for all events |
+| `description` | string | no | Description of this webhook endpoint |
+| `metadata` | object | no | Up to 20 key-value pairs of custom data |
+| `enabled` | boolean | no | Whether the endpoint is active immediately (default: `true`) |
+| `api_version` | string | no | API version to use when sending events (default: current version) |
+| `idempotency_key` | string | no | Idempotency key for safe retries |
+
+### Returns
+
+Returns a `WebhookEndpoint` object including the signing secret.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/webhook_endpoints \
+  -H "Authorization: Bearer *** \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.example.com/webhooks/itpay",
+    "events": [
+      "payment_intent.succeeded",
+      "payment_intent.failed",
+      "subscription.renewed",
+      "refund.completed"
+    ],
+    "description": "Production webhook for payment notifications",
+    "metadata": {
+      "environment": "production",
+      "team": "payments"
+    }
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "we_abc123def456",
+  "object": "webhook_endpoint",
+  "url": "https://api.example.com/webhooks/itpay",
+  "events": [
+    "payment_intent.succeeded",
+    "payment_intent.failed",
+    "subscription.renewed",
+    "refund.completed"
+  ],
+  "description": "Production webhook for payment notifications",
+  "secret": "whsec_abc123def456ghijklmnopqrstuvwxyz",
+  "status": "enabled",
+  "metadata": {
+    "environment": "production",
+    "team": "payments"
+  },
+  "created": 1717094400,
+  "updated": 1717094400
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_url` | URL must be a valid HTTPS endpoint |
+| 400 | `invalid_events` | One or more event types are invalid |
+| 400 | `url_already_exists` | This URL is already registered as a webhook endpoint |
+
+## GET /v1/webhook_endpoints
+
+List all webhook endpoints.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | integer | no | Number of endpoints to return (1-100, default: 10) |
+| `starting_after` | string | no | Cursor for pagination |
+| `ending_before` | string | no | Cursor for pagination |
+| `status` | string | no | Filter by status (`enabled`, `disabled`) |
+
+### Returns
+
+Returns a list of `WebhookEndpoint` objects.
+
+### Example
+
+```bash
+curl "https://api.itpay.io/v1/webhook_endpoints?limit=25" \
+  -H "Authorization: Bearer sk_liv...n### Response
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "we_abc123def456",
+      "object": "webhook_endpoint",
+      "url": "https://api.example.com/webhooks/itpay",
+      "events": ["payment_intent.succeeded", "payment_intent.failed"],
+      "status": "enabled",
+      "created": 1717094400
+    },
+    {
+      "id": "we_ghi789jkl012",
+      "object": "webhook_endpoint",
+      "url": "https://staging.example.com/webhooks/itpay",
+      "events": ["*"],
+      "status": "enabled",
+      "created": 1717094000
+    }
+  ],
+  "has_more": false,
+  "url": "/v1/webhook_endpoints"
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_status` | Invalid status filter |
+
+## GET /v1/webhook_endpoints/:id
+
+Retrieve a webhook endpoint by its ID.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the webhook endpoint to retrieve |
+
+### Returns
+
+Returns a `WebhookEndpoint` object. Note: the signing secret is only returned on creation.
+
+### Example
+
+```bash
+curl https://api.itpay.io/v1/webhook_endpoints/we_abc123def456 \
+  -H "Authorization: Bearer sk_liv...n### Response
+
+```json
+{
+  "id": "we_abc123def456",
+  "object": "webhook_endpoint",
+  "url": "https://api.example.com/webhooks/itpay",
+  "events": [
+    "payment_intent.succeeded",
+    "payment_intent.failed",
+    "subscription.renewed",
+    "refund.completed"
+  ],
+  "description": "Production webhook for payment notifications",
+  "status": "enabled",
+  "metadata": {
+    "environment": "production",
+    "team": "payments"
+  },
+  "created": 1717094400,
+  "updated": 1717094400
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 404 | `webhook_endpoint_not_found` | No webhook endpoint found with the given ID |
+
+## POST /v1/webhook_endpoints/:id
+
+Update a webhook endpoint.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the webhook endpoint to update |
+| `url` | string | no | New HTTPS URL for the endpoint |
+| `events` | `array<string>` | no | New list of event types to subscribe to |
+| `description` | string | no | New description |
+| `metadata` | object | no | Metadata to merge (replaces existing keys) |
+| `enabled` | boolean | no | Enable or disable the endpoint |
+
+### Returns
+
+Returns the updated `WebhookEndpoint` object.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/webhook_endpoints/we_abc123def456 \
+  -H "Authorization: Bearer *** \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": ["payment_intent.succeeded", "payment_intent.failed", "subscription.renewed", "refund.completed", "refund.failed"],
+    "description": "Production webhook - updated with refund failed events"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "we_abc123def456",
+  "object": "webhook_endpoint",
+  "url": "https://api.example.com/webhooks/itpay",
+  "events": [
+    "payment_intent.succeeded",
+    "payment_intent.failed",
+    "subscription.renewed",
+    "refund.completed",
+    "refund.failed"
+  ],
+  "description": "Production webhook - updated with refund failed events",
+  "status": "enabled",
+  "created": 1717094400,
+  "updated": 1717094600
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_url` | URL must be a valid HTTPS endpoint |
+| 400 | `invalid_events` | One or more event types are invalid |
+| 404 | `webhook_endpoint_not_found` | No webhook endpoint found with the given ID |
+
+## DELETE /v1/webhook_endpoints/:id
+
+Delete a webhook endpoint permanently.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the webhook endpoint to delete |
+
+### Returns
+
+Returns a confirmation object.
+
+### Example
+
+```bash
+curl -X DELETE https://api.itpay.io/v1/webhook_endpoints/we_abc123def456 \
+  -H "Authorization: Bearer ***
+```
+
+### Response
+
+```json
+{
+  "id": "we_abc123def456",
+  "object": "webhook_endpoint",
+  "deleted": true
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 404 | `webhook_endpoint_not_found` | No webhook endpoint found with the given ID |
+
+## Event Types Reference
+
+### Payment Events
+
+| Event Type | Description |
+|------------|-------------|
+| `payment_intent.created` | A payment intent was created |
+| `payment_intent.succeeded` | A payment intent completed successfully |
+| `payment_intent.failed` | A payment intent processing failed |
+| `payment_intent.canceled` | A payment intent was canceled |
+| `payment_intent.confirmed` | A payment intent was confirmed |
+
+### Subscription Events
+
+| Event Type | Description |
+|------------|-------------|
+| `subscription.created` | A new subscription was created |
+| `subscription.renewed` | A subscription was renewed (payment collected) |
+| `subscription.renewal_failed` | A subscription renewal payment failed |
+| `subscription.canceled` | A subscription was canceled |
+| `subscription.updated` | A subscription was updated (plan change) |
+| `subscription.expired` | A subscription reached its natural end |
+| `subscription.trial_ending` | Trial period will end in 3 days |
+
+### Refund Events
+
+| Event Type | Description |
+|------------|-------------|
+| `refund.created` | A refund request was created |
+| `refund.completed` | A refund was successfully processed |
+| `refund.failed` | A refund processing failed |
+| `refund.canceled` | A refund was canceled |
+
+### Manifest Events
+
+| Event Type | Description |
+|------------|-------------|
+| `manifest.published` | A manifest was published |
+| `manifest.deactivated` | A manifest was deactivated |
+
+### Transfer Events
+
+| Event Type | Description |
+|------------|-------------|
+| `transfer.completed` | A payout transfer was completed |
+| `transfer.failed` | A payout transfer failed |
+
+## Signature Verification
+
+All webhook requests include an `Itpay-Signature` header. Verify signatures to ensure requests are legitimate.
+
+### Verification Steps
+
+1. Extract the signature from the `Itpay-Signature` header
+2. Get the raw request body (do not parse or modify it)
+3. Compute an HMAC-SHA256 hash of the body using your webhook secret
+4. Compare the computed signature with the header value (use constant-time comparison)
+
+### TypeScript Example
+
+```typescript
+import crypto from 'crypto';
+
+function verifyWebhookSignature(
+  rawBody: Buffer,
+  signature: string,
+  secret: string
+): boolean {
+  const computed = crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex');
+  const expected = `sha256=${computed}`;
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected)
+  );
+}
+
+// Usage in Express
+app.post('/webhooks/itpay', express.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['itpay-signature'] as string;
+  const secret = 'whsec_abc123def456ghijklmnopqrstuvwxyz';
+
+  if (!verifyWebhookSignature(req.body, sig, secret)) {
+    return res.status(400).json({ error: 'Invalid signature' });
+  }
+
+  const event = JSON.parse(req.body.toString());
+  // Process event...
+  res.json({ received: true });
+});
+```
+
+### Go Example
+
+```go
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+    "net/http"
+)
+
+func verifyWebhookSignature(payload []byte, signature, secret string) bool {
+    mac := hmac.New(sha256.New, []byte(secret))
+    mac.Write(payload)
+    expected := fmt.Sprintf("sha256=%s", hex.EncodeToString(mac.Sum(nil)))
+    return hmac.Equal([]byte(signature), []byte(expected))
+}
+
+func webhookHandler(w http.ResponseWriter, r *http.Request) {
+    signature := r.Header.Get("Itpay-Signature")
+    secret := "whsec_abc123def456ghijklmnopqrstuvwxyz"
+
+    buf := new(bytes.Buffer)
+    buf.ReadFrom(r.Body)
+    payload := buf.Bytes()
+
+    if !verifyWebhookSignature(payload, signature, secret) {
+        http.Error(w, "Invalid signature", http.StatusBadRequest)
+        return
+    }
+
+    // Process event...
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(map[string]bool{"received": true})
+}
+```
+
+## Retry Policy
+
+Webhook delivery follows an exponential backoff retry schedule:
+
+| Attempt | Delay After Previous Attempt |
+|---------|------------------------------|
+| 1st | Immediate |
+| 2nd | 10 seconds |
+| 3rd | 1 minute |
+| 4th | 10 minutes |
+| 5th | 1 hour |
+| 6th | 6 hours |
+| 7th | 24 hours |
+| 8th+ | Every 24 hours (up to 7 days) |
+
+After 7 days of continuous failures, the endpoint is automatically disabled and a notification is sent to the account email.
+
+### Best Practices
+
+- Respond with `200 OK` as quickly as possible — process events asynchronously
+- Do not parse the body before verifying the signature
+- Store the event `id` to deduplicate in case of retries
+- Log all received events for debugging
+- Configure alerts for webhook delivery failures
+- Rotate webhook secrets periodically via the dashboard
+
+## Next Steps
+
+- Implement the [Platform Guide](/guides/implementing-a-platform) end-to-end
+- Review [Error Codes](/reference/error-codes) for webhook-related errors
+- Browse all [API Reference](/reference/api/payments) endpoints

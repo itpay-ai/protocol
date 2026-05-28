@@ -1,0 +1,271 @@
+---
+sidebar_position: 7
+---
+
+# Versioning
+
+## Overview
+
+The ItPay Protocol uses a date-based API versioning scheme that provides predictable, backward-compatible evolution of the API. Each version is identified by a date in `YYYY-MM-DD` format (e.g., `2026-05-01`).
+
+This approach allows the API to evolve and improve while giving integrators control over when they adopt breaking changes.
+
+### Version Format
+
+- **Format**: `YYYY-MM-DD` (ISO 8601 date)
+- **Examples**: `2026-05-01`, `2026-11-01`
+- **Current stable version**: `2026-05-01`
+- **Latest version (may be in development)**: `2026-11-01`
+
+## API Versioning
+
+### Version Specification
+
+Clients specify the API version in one of two ways:
+
+#### 1. Itpay-Version Header
+
+Send the `Itpay-Version` header with every request:
+
+```
+Itpay-Version: 2026-05-01
+```
+
+This is the recommended approach as it gives explicit per-request control.
+
+#### 2. Dashboard Account Default
+
+Set a default API version in the ItPay Dashboard under **Developers > API Versions**. Requests that omit the `Itpay-Version` header will use the account default.
+
+```
+Account default: 2026-05-01
+```
+
+**Warning**: Changing the default version affects all requests that do not specify an explicit version. It is best practice to always send the header.
+
+### Version Binding
+
+The API version is **bound to the API key** at the time the key is created. If a request does not specify an explicit `Itpay-Version` header, the version bound to the API key is used.
+
+- Keys created today will default to the current stable version.
+- If you update your account default, existing keys still use the version they were created with.
+- To use a new version, either send the `Itpay-Version` header or create a new API key.
+
+### Response Version Header
+
+Every API response includes the `Itpay-Version` header indicating which version was used to process the request:
+
+```
+Itpay-Version: 2026-05-01
+```
+
+## Version Lifecycle
+
+Each API version passes through four stages during its lifecycle.
+
+### Lifecycle Stages
+
+| Stage | Description | Timeline |
+|-------|-------------|----------|
+| **Current** | The most recent stable version. All new features and fixes are added here. All breaking changes for the next version are accepted. | ~6 months |
+| **Active** | Previous stable versions that remain fully supported. Bug fixes and security patches are backported. No new features. | 6 months after next version is released |
+| **Deprecated** | Version is still functional but sunset is announced. Warning headers are added to responses. Users are encouraged to migrate. | 3 months |
+| **Sunset** | Version is no longer available. Requests using this version receive a `400 Bad Request` with code `api_version_sunset`. | After deprecated period ends |
+
+### Timeline Table
+
+| Version | Current | Active | Deprecated | Sunset |
+|---------|---------|--------|------------|--------|
+| 2026-05-01 | ✅ Current | — | — | — |
+| 2025-11-01 | ❌ | ✅ Active | — | — |
+| 2025-05-01 | ❌ | ✅ Active | ⏳ Deprecated (ends 2026-08-01) | — |
+| 2024-11-01 | ❌ | ❌ | ❌ | ✅ Sunset on 2026-02-01 |
+| 2024-05-01 | ❌ | ❌ | ❌ | ✅ Sunset on 2025-08-01 |
+
+### Version Lifecycle Visualization
+
+```
+2024-05-01  -[A][A][A][A][D][D][D][S][S][S][S][S][S][S]...
+2024-11-01  -------[A][A][A][A][A][A][D][D][D][S][S][S]...
+2025-05-01  -----------[C][C][A][A][A][A][A][A][D][D][D]...
+2025-11-01  -------------------[C][C][A][A][A][A][A][A]...
+2026-05-01  ---------------------------[C][C][C][C][C]...
+
+Legend: C=Current, A=Active, D=Deprecated, S=Sunset
+```
+
+### Deprecation Warning Header
+
+During the **Deprecated** stage, all responses include a deprecation warning:
+
+```
+Itpay-Version-Deprecated: 2025-05-01
+Itpay-Version-Sunset-Date: 2026-08-01
+Itpay-Version-Sunset-Link: https://docs.itpay.io/api/upgrade-guide-2025-11-01
+```
+
+### Sunset Error
+
+When a sunset version is used, the API returns:
+
+```json
+{
+  "error": {
+    "type": "invalid_request_error",
+    "code": "api_version_sunset",
+    "message": "API version 2024-05-01 has been sunset. Please upgrade to a supported version. See https://docs.itpay.io/api/upgrade-guide-2024-11-01",
+    "param": null,
+    "doc_url": "https://docs.itpay.io/api/errors#api_version_sunset",
+    "request_id": "req_7Gh2jK4mN6pR"
+  }
+}
+```
+
+## Changelog
+
+### 2026-11-01 (Upcoming)
+
+| Change | Type | Description |
+|--------|------|-------------|
+| Webhook payload schema v2 | Breaking | Removed `pending_webhooks` field. Added `event_context` with correlation ID. |
+| Pagination default limit | Breaking | Default limit changed from 10 to 25. |
+| New error codes | Additive | Added `payment_capture_expired` and `payment_method_failed` error codes. |
+| Rate limit headers | Additive | Added `Itpay-Rate-Limit-Burst` header to distinguish sustained from burst limits. |
+| Metadata key validation | Breaking | Metadata keys now must match `^[a-zA-Z0-9_]{1,40}$` (was previously unrestricted). |
+
+### 2026-05-01 (Current)
+
+| Change | Type | Description |
+|--------|------|-------------|
+| Initial stable release | — | Public launch of the ItPay Protocol API v1. |
+| Payment Intents API | Additive | Full PaymentIntent CRUD with capture, cancel, and refund. |
+| Checkout Sessions API | Additive | Hosted checkout session creation and management. |
+| Webhooks | Additive | Event-driven webhooks with HMAC-SHA256 verification. |
+| Rate limiting | Additive | Token bucket rate limiting per API key. |
+| Idempotency | Additive | Idempotency key support for safe retries. |
+
+### 2025-11-01 (Active)
+
+| Change | Type | Description |
+|--------|------|-------------|
+| Payouts API | Additive | Create and manage automated payouts to merchants. |
+| Balance API | Additive | Real-time balance and transaction history. |
+| Expanded error codes | Additive | Added 30+ new error codes for better diagnostics. |
+| Idempotency TTL | Additive | Configurable idempotency key TTL (default 24h, max 7d). |
+| Response compression | Additive | Added `Accept-Encoding: gzip` support for list endpoints. |
+
+### 2025-05-01 (Deprecated)
+
+| Change | Type | Description |
+|--------|------|-------------|
+| Webhook retry policy v2 | Breaking | Reduced max retries from 20 to 10, added jitter. |
+| Expanded metadata limits | Breaking | Metadata size increased to 5KB, max 50 keys. |
+| New webhook events | Additive | Added `checkout.session.expired`, `refund.updated`. |
+| API key rotation endpoints | Additive | Programmatic key rotation via API. |
+| Rate limit header changes | Breaking | Deprecated `X-RateLimit-*` headers in favor of `Itpay-Rate-Limit-*`. |
+
+### 2024-11-01 (Sunset)
+
+| Change | Type | Description |
+|--------|------|-------------|
+| Initial beta release | — | First public beta with PaymentIntents and basic webhooks. |
+| Basic rate limiting | Additive | Simple rate limiting with `X-RateLimit-*` headers. |
+| Minimal error codes | Additive | 10 basic error codes. |
+
+### 2024-05-01 (Sunset)
+
+| Change | Type | Description |
+|--------|------|-------------|
+| Internal alpha | — | Private alpha release for early partners. Not publicly documented. |
+
+## Migration Guide
+
+### General Migration Steps
+
+Follow these steps to migrate between any two API versions:
+
+1. **Read the changelog**: Review the changes for the version you are migrating to. Note any breaking changes that affect your integration.
+
+2. **Update your API version header**: Change the `Itpay-Version` header in your requests to the new version.
+
+3. **Run in test mode**: Send test requests with the new version header using test API keys. Verify that all endpoints return expected responses.
+
+4. **Update error handling**: Check if new error codes were added and update your error handling logic accordingly.
+
+5. **Update webhook handlers**: If the webhook payload schema changed, update your webhook handlers. Use the `api_version` field in webhook events to identify the schema version.
+
+6. **Staged rollout**: Migrate one endpoint or service at a time. Monitor error rates and response patterns.
+
+7. **Update all services**: Ensure all services that call the ItPay API are updated. Services using the old version header will continue to work until the version is sunset.
+
+8. **Verify in production**: After migration, verify that all flows (payment, refund, webhook) are working correctly.
+
+### Migrating from 2025-11-01 to 2026-05-01
+
+This migration is straightforward as 2026-05-01 is the initial stable release. No breaking changes from 2025-11-01.
+
+### Migrating from 2025-05-01 to 2025-11-01
+
+**Breaking Changes:**
+
+1. **Webhook retry policy**: Max retries reduced from 20 to 10. If your webhook handler is unreliable, improve response time (< 5s) or defer processing to background jobs.
+
+2. **Metadata limits**: Metadata size increased from 2KB to 5KB, max keys increased from 20 to 50. Ensure your metadata conforms to the new limits.
+
+3. **Rate limit headers**: Replace `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` with `Itpay-Rate-Limit-Limit`, `Itpay-Rate-Limit-Remaining`, and `Itpay-Rate-Limit-Reset`.
+
+**Migration Script: Header Update**
+
+```python
+# Old headers (2025-05-01)
+old_headers = {
+    "Itpay-Version": "2025-05-01",
+}
+rate_limit_headers = {
+    "X-RateLimit-Limit": response.headers.get("X-RateLimit-Limit"),
+}
+
+# New headers (2025-11-01)
+new_headers = {
+    "Itpay-Version": "2025-11-01",
+}
+rate_limit_headers = {
+    "Itpay-Rate-Limit-Limit": response.headers.get("Itpay-Rate-Limit-Limit"),
+}
+```
+
+### Migrating from 2024-11-01 to 2025-05-01
+
+**Breaking Changes:**
+
+1. **Webhook retry policy**: Changed from linear 10-second retries to exponential backoff with jitter. Ensure your webhook handler is idempotent to handle variable retry timing.
+
+2. **Rate limit headers**: Adopt the new `X-RateLimit-*` headers (later replaced in 2025-11-01). Both old and new headers are available during the transition.
+
+### Best Practices
+
+- **Pin your version**: Always send an explicit `Itpay-Version` header in every request. Do not rely on the account default.
+- **Test before upgrading**: Use test mode API keys to validate behavior before deploying to production.
+- **Monitor deprecation warnings**: Watch for `Itpay-Version-Deprecated` and `Itpay-Version-Sunset-Date` headers in responses.
+- **Maintain a version matrix**: Keep a record of which API versions each of your services uses.
+- **Update gradually**: Migrate one service at a time, monitoring error rates and response patterns.
+- **Keep SDKs updated**: If using an ItPay SDK, update to the latest version which includes support for new API versions.
+
+### Supported Version Matrix
+
+| SDK / Library | 2025-05-01 | 2025-11-01 | 2026-05-01 |
+|---------------|------------|------------|------------|
+| itpay-python | ≥ 1.0.0 | ≥ 1.5.0 | ≥ 2.0.0 |
+| itpay-node | ≥ 1.0.0 | ≥ 1.4.0 | ≥ 2.0.0 |
+| itpay-go | ≥ 1.0.0 | ≥ 1.3.0 | ≥ 2.0.0 |
+| itpay-java | ≥ 1.0.0 | ≥ 1.5.0 | ≥ 2.0.0 |
+| itpay-ruby | ≥ 1.0.0 | ≥ 1.4.0 | ≥ 2.0.0 |
+
+### Getting Help
+
+If you encounter issues during migration:
+
+- **Documentation**: Check the full API reference and migration guides at https://docs.itpay.io
+- **Support**: Contact support via the ItPay Dashboard or email support@itpay.io
+- **Community**: Join the ItPay Developer Slack for community assistance
+- **Request ID**: Always include the `request_id` from error responses when contacting support

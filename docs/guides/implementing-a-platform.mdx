@@ -1,0 +1,503 @@
+---
+title: Implementing a Platform
+sidebar_label: Platform Implementation
+description: Step-by-step guide to implement the ItPay Protocol as a Platform, covering auth setup, payee management, manifest creation, payment handling, subscriptions, webhooks, refunds, and pagination.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Implementing a Platform
+
+This guide walks you through implementing the ItPay Protocol as a **Platform** — a system that collects payments on behalf of multiple payees. By the end of this guide, you will have a fully functional payment processing pipeline.
+
+## Prerequisites
+
+- ItPay Protocol SDK installed (`go get github.com/itpay/protocol` or `npm install @itpay/protocol`)
+- API credentials from the ItPay dashboard
+- A registered Platform account
+
+## Step 1: Authentication Setup
+
+Before making any API calls, configure your authentication credentials.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/itpay/protocol/sdk/go"
+)
+
+func main() {
+    client := itpay.NewClient(&itpay.Config{
+        APIKey:    "pk_live_itpay_abc123",
+        SecretKey: "sk_live_itpay_xyz789",
+        BaseURL:   "https://api.itpay.io/v1",
+    })
+
+    ctx := context.Background()
+
+    // Verify credentials
+    resp, err := client.Auth.Verify(ctx)
+    if err != nil {
+        log.Fatalf("auth verification failed: %v", err)
+    }
+    log.Printf("Authenticated as platform: %s", resp.PlatformID)
+}
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+import { ItPayClient } from '@itpay/protocol';
+
+const client = new ItPayClient({
+  apiKey: 'pk_live_itpay_abc123',
+  secretKey: 'sk_live_itpay_xyz789',
+  baseURL: 'https://api.itpay.io/v1',
+});
+
+const verify = await client.auth.verify();
+console.log(`Authenticated as platform: ${verify.platformId}`);
+```
+
+</TabItem>
+</Tabs>
+
+## Step 2: Payee Management
+
+Register payees (sub-merchants) who will receive payments through your platform.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+type CreatePayeeInput struct {
+    Name        string `json:"name"`
+    Email       string `json:"email"`
+    Country     string `json:"country"`
+    Currency    string `json:"currency"`
+    SettlementDetails *SettlementConfig `json:"settlement_details,omitempty"`
+}
+
+payee, err := client.Payees.Create(ctx, &CreatePayeeInput{
+    Name:     "Acme Widgets LLC",
+    Email:    "finance@acmewidgets.com",
+    Country:  "US",
+    Currency: "USD",
+    SettlementDetails: &SettlementConfig{
+        BankAccount: "****1234",
+        Schedule:    "daily",
+    },
+})
+if err != nil {
+    log.Fatalf("failed to create payee: %v", err)
+}
+log.Printf("Created payee: %s", payee.ID)
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+const payee = await client.payees.create({
+  name: 'Acme Widgets LLC',
+  email: 'finance@acmewidgets.com',
+  country: 'US',
+  currency: 'USD',
+  settlementDetails: {
+    bankAccount: '****1234',
+    schedule: 'daily',
+  },
+});
+console.log(`Created payee: ${payee.id}`);
+```
+
+</TabItem>
+</Tabs>
+
+## Step 3: Manifest Creation
+
+A **Manifest** defines the payment rules for a payee — what products or services they offer and how much they charge.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+manifest, err := client.Manifests.Create(ctx, &itpay.CreateManifestInput{
+    PayeeID: payee.ID,
+    Name:    "Premium Widget Package",
+    Description: "Access to premium widget features",
+    Amount:  2999, // $29.99 in cents
+    Currency: "USD",
+    Interval: "monthly", // one of: one_time, daily, weekly, monthly, yearly
+    Metadata: map[string]string{
+        "plan_tier": "premium",
+        "max_users": "10",
+    },
+})
+if err != nil {
+    log.Fatalf("failed to create manifest: %v", err)
+}
+log.Printf("Created manifest: %s", manifest.ID)
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+const manifest = await client.manifests.create({
+  payeeId: payee.id,
+  name: 'Premium Widget Package',
+  description: 'Access to premium widget features',
+  amount: 2999,
+  currency: 'USD',
+  interval: 'monthly',
+  metadata: {
+    plan_tier: 'premium',
+    max_users: '10',
+  },
+});
+console.log(`Created manifest: ${manifest.id}`);
+```
+
+</TabItem>
+</Tabs>
+
+## Step 4: Payment Handling
+
+Process payments using payment intents. The platform creates the intent, and the customer completes it via the configured channel.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+intent, err := client.PaymentIntents.Create(ctx, &itpay.CreatePaymentIntentInput{
+    ManifestID: manifest.ID,
+    PayeeID:    payee.ID,
+    Amount:     2999,
+    Currency:   "USD",
+    Channels:   []string{"card", "bank_transfer"},
+    Customer: &itpay.CustomerInfo{
+        Email: "customer@example.com",
+        Name:  "Jane Doe",
+    },
+    IdempotencyKey: "idem_req_001",
+})
+if err != nil {
+    log.Fatalf("failed to create payment intent: %v", err)
+}
+log.Printf("Payment intent created: %s", intent.ID)
+log.Printf("Client secret: %s", intent.ClientSecret)
+
+// Confirm the payment (after customer provides payment details)
+confirmed, err := client.PaymentIntents.Confirm(ctx, intent.ID, &itpay.ConfirmInput{
+    PaymentMethodID: "pm_card_visa",
+})
+if err != nil {
+    log.Fatalf("confirmation failed: %v", err)
+}
+log.Printf("Payment confirmed: %s (status: %s)", confirmed.ID, confirmed.Status)
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+const intent = await client.paymentIntents.create({
+  manifestId: manifest.id,
+  payeeId: payee.id,
+  amount: 2999,
+  currency: 'USD',
+  channels: ['card', 'bank_transfer'],
+  customer: {
+    email: 'customer@example.com',
+    name: 'Jane Doe',
+  },
+  idempotencyKey: 'idem_req_001',
+});
+console.log(`Payment intent created: ${intent.id}`);
+
+// Confirm the payment
+const confirmed = await client.paymentIntents.confirm(intent.id, {
+  paymentMethodId: 'pm_card_visa',
+});
+console.log(`Payment confirmed: ${confirmed.id} (status: ${confirmed.status})`);
+```
+
+</TabItem>
+</Tabs>
+
+## Step 5: Subscription Support
+
+Create recurring billing for customers.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+subscription, err := client.Subscriptions.Create(ctx, &itpay.CreateSubscriptionInput{
+    ManifestID:       manifest.ID,
+    PayeeID:          payee.ID,
+    Customer: &itpay.CustomerInfo{
+        Email: "customer@example.com",
+    },
+    Currency:         "USD",
+    TrialPeriodDays:  14,
+    Metadata: map[string]string{
+        "referrer": "direct",
+    },
+})
+if err != nil {
+    log.Fatalf("failed to create subscription: %v", err)
+}
+log.Printf("Subscription created: %s (status: %s)", subscription.ID, subscription.Status)
+
+// Cancel subscription
+canceled, err := client.Subscriptions.Cancel(ctx, subscription.ID, &itpay.CancelInput{
+    CancelAtPeriodEnd: true,
+    Reason:            "customer_request",
+})
+if err != nil {
+    log.Fatalf("failed to cancel subscription: %v", err)
+}
+log.Printf("Subscription canceled: %s", canceled.ID)
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+const subscription = await client.subscriptions.create({
+  manifestId: manifest.id,
+  payeeId: payee.id,
+  customer: { email: 'customer@example.com' },
+  currency: 'USD',
+  trialPeriodDays: 14,
+  metadata: { referrer: 'direct' },
+});
+console.log(`Subscription created: ${subscription.id}`);
+
+const canceled = await client.subscriptions.cancel(subscription.id, {
+  cancelAtPeriodEnd: true,
+  reason: 'customer_request',
+});
+console.log(`Subscription canceled: ${canceled.id}`);
+```
+
+</TabItem>
+</Tabs>
+
+## Step 6: Webhook Integration
+
+Receive real-time notifications about payment events.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+type WebhookHandler struct {
+    client *itpay.Client
+}
+
+func (h *WebhookHandler) HandlePaymentSucceeded(payload []byte) error {
+    event, err := h.client.Webhooks.ConstructEvent(
+        payload,
+        r.Header.Get("Itpay-Signature"),
+        "whsec_your_webhook_secret",
+    )
+    if err != nil {
+        return fmt.Errorf("signature verification failed: %w", err)
+    }
+
+    switch event.Type {
+    case "payment_intent.succeeded":
+        var intent itpay.PaymentIntent
+        json.Unmarshal(event.Data, &intent)
+        log.Printf("Payment succeeded: %s (amount: %d)", intent.ID, intent.Amount)
+        // Update your database, send confirmation email, etc.
+    case "payment_intent.failed":
+        log.Printf("Payment failed: %s", event.ID)
+    default:
+        log.Printf("Unhandled event type: %s", event.Type)
+    }
+    return nil
+}
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+import express from 'express';
+import { ItPayClient } from '@itpay/protocol';
+
+const app = express();
+const client = new ItPayClient({ secretKey: 'sk_live_itpay_xyz789' });
+
+app.post('/webhooks/itpay', express.raw({ type: 'application/json' }), (req, res) => {
+  const sig = req.headers['itpay-signature'] as string;
+
+  try {
+    const event = client.webhooks.constructEvent(req.body, sig, 'whsec_your_webhook_secret');
+
+    switch (event.type) {
+      case 'payment_intent.succeeded':
+        console.log(`Payment succeeded: ${event.data.id}`);
+        break;
+      case 'payment_intent.failed':
+        console.log(`Payment failed: ${event.data.id}`);
+        break;
+      case 'subscription.renewed':
+        console.log(`Subscription renewed: ${event.data.id}`);
+        break;
+      default:
+        console.log(`Unhandled event: ${event.type}`);
+    }
+
+    res.json({ received: true });
+  } catch (err) {
+    console.error('Webhook error:', err);
+    res.status(400).send('Signature verification failed');
+  }
+});
+```
+
+</TabItem>
+</Tabs>
+
+## Step 7: Refund Processing
+
+Handle full or partial refunds against completed payments.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+// Full refund
+refund, err := client.Refunds.Create(ctx, &itpay.CreateRefundInput{
+    PaymentIntentID: intent.ID,
+    Amount:          intent.Amount, // full amount
+    Reason:          "customer_request",
+    Metadata: map[string]string{
+        "ticket_id": "TKT-45678",
+    },
+})
+if err != nil {
+    log.Fatalf("refund failed: %v", err)
+}
+log.Printf("Refund created: %s (amount: %d)", refund.ID, refund.Amount)
+
+// Partial refund (refund $10.00)
+partialRefund, err := client.Refunds.Create(ctx, &itpay.CreateRefundInput{
+    PaymentIntentID: intent.ID,
+    Amount:          1000,
+    Reason:          "partial_refund",
+})
+if err != nil {
+    log.Fatalf("partial refund failed: %v", err)
+}
+log.Printf("Partial refund created: %s", partialRefund.ID)
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+// Full refund
+const refund = await client.refunds.create({
+  paymentIntentId: intent.id,
+  amount: intent.amount,
+  reason: 'customer_request',
+  metadata: { ticket_id: 'TKT-45678' },
+});
+console.log(`Refund created: ${refund.id}`);
+
+// Partial refund
+const partial = await client.refunds.create({
+  paymentIntentId: intent.id,
+  amount: 1000,
+  reason: 'partial_refund',
+});
+console.log(`Partial refund created: ${partial.id}`);
+```
+
+</TabItem>
+</Tabs>
+
+## Step 8: Pagination
+
+List and paginate through resources efficiently.
+
+<Tabs>
+<TabItem value="go" label="Go">
+
+```go
+// List payment intents with cursor-based pagination
+list, err := client.PaymentIntents.List(ctx, &itpay.ListInput{
+    PayeeID: payee.ID,
+    Limit:   25,
+    Status:  "succeeded",
+    StartingAfter: "pi_last_seen_id",
+})
+if err != nil {
+    log.Fatalf("failed to list intents: %v", err)
+}
+
+for _, intent := range list.Data {
+    log.Printf("Intent %s: %d %s (status: %s)",
+        intent.ID, intent.Amount, intent.Currency, intent.Status)
+}
+
+log.Printf("Has more: %v", list.HasMore)
+if list.HasMore {
+    nextPage, _ := client.PaymentIntents.List(ctx, &itpay.ListInput{
+        Limit:  25,
+        Status: "succeeded",
+        StartingAfter: list.Data[len(list.Data)-1].ID,
+    })
+    log.Printf("Next page has %d items", len(nextPage.Data))
+}
+```
+
+</TabItem>
+<TabItem value="typescript" label="TypeScript">
+
+```typescript
+const list = await client.paymentIntents.list({
+  payeeId: payee.id,
+  limit: 25,
+  status: 'succeeded',
+  startingAfter: 'pi_last_seen_id',
+});
+
+for (const intent of list.data) {
+  console.log(`Intent ${intent.id}: ${intent.amount} ${intent.currency} (${intent.status})`);
+}
+
+console.log(`Has more: ${list.hasMore}`);
+if (list.hasMore) {
+  const nextPage = await client.paymentIntents.list({
+    limit: 25,
+    status: 'succeeded',
+    startingAfter: list.data[list.data.length - 1].id,
+  });
+  console.log(`Next page has ${nextPage.data.length} items`);
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Next Steps
+
+- Read the [Writing a Channel Adapter](/guides/writing-a-channel-adapter) guide to extend payment channels
+- Explore the [API Reference](/reference/api/payments) for advanced payment intent options
+- Configure [Webhook Endpoints](/reference/api/webhooks) for production monitoring

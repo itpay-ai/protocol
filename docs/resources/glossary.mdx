@@ -1,0 +1,137 @@
+---
+title: "Glossary"
+sidebar_label: "Glossary"
+description: "Complete glossary of ItPay Protocol terminology"
+---
+
+# Glossary
+
+## A
+
+### Adapter
+See **Channel Adapter**.
+
+### API Key
+A secret token used to authenticate requests to the ItPay API. API keys are prefixed with `sk_live_` (production) or `sk_test_` (test mode). Each key has associated permissions and a livemode flag. Never share your API key or commit it to version control.
+
+### Authorization
+The first phase of a two-phase payment flow where funds are verified and held (reserved) but not yet transferred to the Payee. Authorized payments can later be captured (completed) or released. See also **Capture**.
+
+---
+
+## C
+
+### Capture
+The second phase of a two-phase payment flow where authorized funds are actually transferred from the Payer to the Payee. See also **Authorization**.
+
+### Channel
+A configured connection to an external payment provider (e.g., Stripe, Paystack, Flutterwave). Channels encapsulate the provider's API credentials, webhook secrets, and configuration. Each Payee is associated with one or more channels.
+
+### Channel Adapter
+A plugin that translates ItPay's canonical payment model into the API of a specific payment provider. Adapters implement the `ChannelAdapter` interface and handle payment creation, refunds, subscriptions, and webhook conversion. See the [Writing a Channel Adapter](/guides/writing-a-channel-adapter) guide.
+
+### Confirmation
+The action of submitting a PaymentIntent for processing through the selected channel. Confirmation triggers the actual charge against the Payer's selected payment method.
+
+---
+
+## D
+
+### Dunning
+The automated process of retrying failed payment attempts for subscriptions. ItPay's dunning engine follows a configurable schedule of retries, escalating from immediate retry to daily attempts, with email notifications at each stage. After exhausting retries, the subscription is marked `past_due` and eventually `canceled`.
+
+---
+
+## E
+
+### Escrow
+A payment flow where funds are held by ItPay (or a trusted third party) until conditions are met (e.g., service delivery confirmed, dispute resolved). Once conditions are satisfied, funds are released to the Payee. Escrow is used for high-value transactions, marketplace platforms, and services with delayed fulfillment.
+
+### Event
+A structured notification about a state change in the ItPay system. Events are delivered via webhooks to registered endpoints. Examples: `payment_intent.succeeded`, `subscription.canceled`. Each event has a unique ID, type, timestamp, and a data payload containing the affected resource.
+
+---
+
+## I
+
+### Idempotency Key
+A unique string sent with POST requests to guarantee safe retries. If a request fails due to a network error or timeout, retrying with the same idempotency key ensures the operation is performed exactly once. Idempotency keys are valid for 24 hours.
+
+### Invoice
+A document representing a request for payment, typically generated for subscriptions at the start of each billing period. Invoices contain line items, totals, taxes, and the payment status. Invoices can be paid automatically (via saved payment method) or manually (the Payer receives a payment link).
+
+### ItPay Protocol
+The open payment protocol that enables Platforms to process payments through any configured channel adapter. The protocol defines canonical data models (PaymentIntent, Subscription, Refund, ServiceManifest) and a uniform REST API that abstracts away provider-specific differences.
+
+---
+
+## M
+
+### Manifest
+See **ServiceManifest**.
+
+### Metadata
+A set of up to 20 key-value pairs (keys ≤ 40 chars, values ≤ 500 chars) that can be attached to ItPay resources (PaymentIntents, Subscriptions, Refunds, etc.). Metadata is never used by ItPay internally — it is provided for your application to store custom references, such as internal order IDs or customer segments.
+
+---
+
+## P
+
+### Payee
+The entity or individual that **receives** funds in a transaction. A Payee registers with a Platform, provides their channel configuration (e.g., Stripe connect account ID), and is associated with one or more ServiceManifests defining what they sell. In a marketplace context, Payees are the sellers or service providers.
+
+### Payer
+The entity or individual that **sends** funds in a transaction. A Payer is the customer who purchases a service or product. Payers have associated payment methods (cards, bank accounts, mobile money wallets) stored with the channel provider. In a marketplace context, Payers are the buyers or customers.
+
+### PaymentIntent
+The core payment primitive in ItPay. A PaymentIntent tracks the full lifecycle of a payment from creation through authorization, confirmation, capture, and settlement. Key states: `requires_payment_method`, `requires_confirmation`, `requires_action`, `processing`, `succeeded`, `failed`, `canceled`. PaymentIntents are channel-agnostic until confirmation, at which point they are routed to a specific channel.
+
+### Platform
+The entity integrating the ItPay Protocol to facilitate payments between Payers and Payees. The Platform registers Payees, onboards Payers, creates ServiceManifests, processes payments, and handles webhooks. Examples: a SaaS company collecting subscription fees, a marketplace connecting buyers and sellers, a freelancing platform processing escrow payments.
+
+### Price
+A specific pricing option within a ServiceManifest. A Price defines the amount, currency, billing interval (for recurring), and trial period. Multiple Prices can exist within a single manifest to offer tiered plans (e.g., Monthly at $9.99, Yearly at $99.99).
+
+---
+
+## Q
+
+### QRCharge
+A payment initiated by scanning a QR code. QRCharges encode a PaymentIntent in a QR format, allowing Payers to complete payment by scanning with their mobile banking app or a supported wallet. Common in emerging markets and point-of-sale scenarios. QRCharges are resolved to standard PaymentIntents once scanned and paid.
+
+---
+
+## R
+
+### Refund
+A reversal of a completed payment, returning funds from the Payee to the Payer. Refunds can be full or partial and may incur processing fees (depending on the channel provider's policy). Each refund references the original PaymentIntent and has its own lifecycle: `pending`, `succeeded`, `failed`, `canceled`. Refunds are subject to channel-specific time windows (typically 180 days).
+
+---
+
+## S
+
+### ServiceManifest
+A product or service definition created by a Payee. A manifest contains one or more Prices (pricing tiers), a name, description, and metadata. Manifests are versioned and can be in `active` or `inactive` state. Subscriptions are created against a specific manifest and price. Manifacts are the catalog items that Payers subscribe to or purchase.
+
+### Settlement
+The process of transferring captured funds from the payment provider to the Payee's bank account or wallet. Settlement timing depends on the channel provider (typically 1–3 business days for card payments, instant for some mobile money providers). ItPay provides settlement status tracking via the PaymentIntent object.
+
+### Subscription
+A recurring billing agreement between a Payer and a Payee. Subscriptions are linked to a ServiceManifest and Price and automatically create PaymentIntents (or Invoices) on the defined billing schedule. ItPay handles retries (dunning), prorations, and lifecycle events. Subscription statuses: `trialing`, `active`, `past_due`, `canceled`, `incomplete`, `incomplete_expired`.
+
+---
+
+## W
+
+### Webhook
+An HTTP callback (POST request) sent by ItPay to a registered endpoint URL to notify the Platform of events. Webhooks carry a JSON payload with the event type, timestamp, and resource data. Each payload includes an `ItPay-Signature` header for verification. Webhook endpoints must respond with a 2xx status within 10 seconds to acknowledge receipt. Failed deliveries are retried up to 7 times with exponential backoff over ~31 hours.
+
+### Webhook Endpoint
+A registered URL that receives webhook events. Endpoints can be configured to receive specific event types (or all events via `["*"]`), have an assigned API version, and are identified by an ID prefixed with `we_`. Each endpoint has a unique signing secret for signature verification.
+
+---
+
+## Numeric
+
+### 3DS
+**Three Domain Secure** — an authentication protocol used by card networks to verify cardholder identity during online transactions. When a PaymentIntent requires 3DS authentication, it enters `requires_action` status and provides a `redirectUrl` for the Payer to complete authentication on the card issuer's page.

@@ -1,0 +1,330 @@
+---
+title: Manifests API
+sidebar_label: Manifests
+description: Stripe-style API reference for manifests — create, retrieve, list, publish, and deactivate manifests with full parameter tables, response examples, and error codes.
+---
+
+# Manifests API
+
+A **Manifest** defines what products or services a payee offers, including pricing, billing intervals, and metadata. Manifests are created in draft mode and must be published before they can be used to create payment intents or subscriptions.
+
+## POST /v1/manifests
+
+Create a new manifest.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `payee_id` | string | yes | ID of the payee who owns this manifest |
+| `name` | string | yes | Human-readable name of the product or plan |
+| `description` | string | no | Detailed description of what this manifest offers |
+| `amount` | integer | yes | Amount in smallest currency unit (cents, kobo, etc.) |
+| `currency` | string | yes | Three-letter ISO 4217 currency code |
+| `interval` | string | no | Billing interval (`one_time`, `daily`, `weekly`, `monthly`, `yearly`). Default: `one_time` |
+| `interval_count` | integer | no | Number of intervals between billings (default: 1). For example, 3 with interval `monthly` = every 3 months |
+| `trial_period_days` | integer | no | Default trial period in days for subscriptions (0-365) |
+| `metadata` | object | no | Up to 20 key-value pairs of custom data |
+| `idempotency_key` | string | no | Idempotency key for safe retries |
+
+### Returns
+
+Returns a `Manifest` object with status `draft`.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/manifests \
+  -H "Authorization: Bearer *** \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem_mf_001" \
+  -d '{
+    "payee_id": "pa_xyz456",
+    "name": "Premium Widget Package",
+    "description": "Access to premium widget features including analytics and priority support",
+    "amount": 2999,
+    "currency": "USD",
+    "interval": "monthly",
+    "interval_count": 1,
+    "trial_period_days": 14,
+    "metadata": {
+      "plan_tier": "premium",
+      "max_users": "10",
+      "features": "analytics,support,api_access"
+    }
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "mf_abc123def456",
+  "object": "manifest",
+  "payee_id": "pa_xyz456",
+  "name": "Premium Widget Package",
+  "description": "Access to premium widget features including analytics and priority support",
+  "amount": 2999,
+  "currency": "USD",
+  "interval": "monthly",
+  "interval_count": 1,
+  "trial_period_days": 14,
+  "status": "draft",
+  "metadata": {
+    "plan_tier": "premium",
+    "max_users": "10",
+    "features": "analytics,support,api_access"
+  },
+  "created": 1717094400,
+  "updated": 1717094400
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_amount` | Amount must be greater than 0 |
+| 400 | `invalid_currency` | Unsupported or invalid currency code |
+| 400 | `invalid_interval` | Invalid billing interval value |
+| 400 | `invalid_trial_days` | Trial period must be between 0 and 365 |
+| 400 | `name_required` | Manifest name is required |
+| 404 | `payee_not_found` | No payee found with the given ID |
+
+## GET /v1/manifests/:id
+
+Retrieve a manifest by its ID.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the manifest to retrieve |
+
+### Returns
+
+Returns a `Manifest` object.
+
+### Example
+
+```bash
+curl https://api.itpay.io/v1/manifests/mf_abc123def456 \
+  -H "Authorization: Bearer sk_liv...n### Response
+
+```json
+{
+  "id": "mf_abc123def456",
+  "object": "manifest",
+  "payee_id": "pa_xyz456",
+  "name": "Premium Widget Package",
+  "description": "Access to premium widget features",
+  "amount": 2999,
+  "currency": "USD",
+  "interval": "monthly",
+  "interval_count": 1,
+  "trial_period_days": 14,
+  "status": "published",
+  "active": true,
+  "metadata": {
+    "plan_tier": "premium"
+  },
+  "created": 1717094400,
+  "updated": 1717094600,
+  "published_at": 1717094600
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 404 | `manifest_not_found` | No manifest found with the given ID |
+
+## GET /v1/manifests
+
+List manifests with filtering and pagination.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | integer | no | Number of manifests to return (1-100, default: 10) |
+| `starting_after` | string | no | Cursor for pagination — return results after this ID |
+| `ending_before` | string | no | Cursor for pagination — return results before this ID |
+| `payee_id` | string | no | Filter by payee ID |
+| `status` | string | no | Filter by status (`draft`, `published`, `deactivated`) |
+| `active` | boolean | no | Filter by active status |
+| `created.gte` | integer | no | Unix timestamp — return manifests created at or after |
+| `created.lte` | integer | no | Unix timestamp — return manifests created at or before |
+
+### Returns
+
+Returns a list with `data`, `has_more`, and pagination cursors.
+
+### Example
+
+```bash
+curl "https://api.itpay.io/v1/manifests?limit=25&status=published" \
+  -H "Authorization: Bearer sk_liv...n### Response
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "mf_abc123def456",
+      "object": "manifest",
+      "payee_id": "pa_xyz456",
+      "name": "Premium Widget Package",
+      "amount": 2999,
+      "currency": "USD",
+      "interval": "monthly",
+      "status": "published",
+      "active": true,
+      "created": 1717094400
+    },
+    {
+      "id": "mf_ghi789jkl012",
+      "object": "manifest",
+      "payee_id": "pa_xyz456",
+      "name": "Basic Widget Plan",
+      "amount": 999,
+      "currency": "USD",
+      "interval": "monthly",
+      "status": "published",
+      "active": true,
+      "created": 1717094000
+    }
+  ],
+  "has_more": false,
+  "url": "/v1/manifests"
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_status` | Invalid manifest status filter |
+
+## POST /v1/manifests/:id/publish
+
+Publish a draft manifest, making it available for payment intents and subscriptions.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the manifest to publish |
+
+### Returns
+
+Returns a `Manifest` object with status set to `published`.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/manifests/mf_abc123def456/publish \
+  -H "Authorization: Bearer ***
+```
+
+### Response
+
+```json
+{
+  "id": "mf_abc123def456",
+  "object": "manifest",
+  "name": "Premium Widget Package",
+  "amount": 2999,
+  "currency": "USD",
+  "interval": "monthly",
+  "status": "published",
+  "active": true,
+  "published_at": 1717094600,
+  "created": 1717094400,
+  "updated": 1717094600
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `already_published` | Manifest is already published |
+| 400 | `cannot_publish` | Manifest cannot be published in its current status |
+| 404 | `manifest_not_found` | No manifest found with the given ID |
+
+## POST /v1/manifests/:id/deactivate
+
+Deactivate a published manifest, preventing new payment intents and subscriptions from using it. Existing subscriptions continue until their current period ends.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the manifest to deactivate |
+| `reason` | string | no | Reason for deactivation |
+
+### Returns
+
+Returns a `Manifest` object with status set to `deactivated`.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/manifests/mf_abc123def456/deactivate \
+  -H "Authorization: Bearer *** \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "plan_discontinued"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "mf_abc123def456",
+  "object": "manifest",
+  "name": "Premium Widget Package",
+  "amount": 2999,
+  "currency": "USD",
+  "interval": "monthly",
+  "status": "deactivated",
+  "active": false,
+  "deactivated_at": 1717094800,
+  "deactivation_reason": "plan_discontinued",
+  "created": 1717094400,
+  "updated": 1717094800
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `already_deactivated` | Manifest is already deactivated |
+| 400 | `cannot_deactivate` | Manifest cannot be deactivated in its current status |
+| 404 | `manifest_not_found` | No manifest found with the given ID |
+
+## Manifest Statuses
+
+| Status | Description |
+|--------|-------------|
+| `draft` | Manifest is being configured but is not yet available for payments |
+| `published` | Manifest is active and can be used for payment intents and subscriptions |
+| `deactivated` | Manifest is no longer accepting new payments; existing subscriptions continue |
+
+## Manifest Lifecycle
+
+1. **Draft** — Create the manifest with all configuration options
+2. **Publish** — Activate the manifest for use in payments and subscriptions
+3. **Active use** — Payment intents and subscriptions reference the published manifest
+4. **Deactivate** — Stop new transactions while honoring existing subscriptions
+5. **Re-publish** — A deactivated manifest can be published again if needed
+
+## Next Steps
+
+- Create [Payment Intents](/reference/api/payments) using a published manifest
+- Set up [Subscriptions](/reference/api/subscriptions) for recurring billing
+- Read the [Platform Implementation Guide](/guides/implementing-a-platform) for manifest workflows

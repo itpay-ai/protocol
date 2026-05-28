@@ -1,0 +1,92 @@
+---
+title: "ItPay Protocol — llms.txt"
+description: "AI-friendly overview of the ItPay Protocol documentation for LLM consumption"
+---
+
+# ItPay Protocol
+
+> A protocol for processing payments through any configured channel adapter, providing uniform REST APIs for PaymentIntents, Subscriptions, Refunds, and ServiceManifests.
+
+## Key Documentation Pages
+
+The ItPay Protocol documentation is organized into three sections: **API Reference**, **Guides**, and **Resources**.
+
+### API Reference
+
+- **Payments API**: `docs/reference/api/payments.mdx` — Create, retrieve, list, confirm, cancel, and capture PaymentIntents. Full Stripe-style endpoint documentation with parameters, responses, cURL examples, and error tables.
+- **Subscriptions API**: `docs/reference/api/subscriptions.mdx` — CRUD operations for recurring billing subscriptions. Create with trial periods, update plans, cancel immediately or at period end, and list with filters.
+- **Refunds API**: `docs/reference/api/refunds.mdx` — Create full/partial refunds, retrieve refund status, list refunds, and cancel pending refunds.
+- **Service Manifests API**: `docs/reference/api/manifests.mdx` — CRUD for ServiceManifests (product catalog definitions with pricing tiers). Versioned, supports draft/published states.
+- **Webhooks API**: `docs/reference/api/webhooks.mdx` — Configure webhook endpoints, subscribe to event types, signature verification, retry policy, and complete event type reference.
+- **Error Codes**: `docs/reference/error-codes.mdx` — Complete error code reference grouped by type: validation (400), business logic (400/402/409), authentication (401), not found (404), rate limit (429), channel errors (402/502), and server errors (500).
+
+### Guides
+
+- **Implementing a Platform**: `docs/guides/implementing-a-platform.mdx` — Step-by-step integration guide covering authentication, Payee registration, ServiceManifest creation, payment processing, subscriptions, webhooks, refunds, and pagination. Includes Go and TypeScript code examples.
+- **Writing a Channel Adapter**: `docs/guides/writing-a-channel-adapter.mdx` — How to build a custom channel adapter plugin. Complete TypeScript interface definition, full Paystack adapter example (200+ lines), registration instructions, testing harness usage, and best practices.
+
+### Resources
+
+- **Glossary**: `docs/resources/glossary.mdx` — Comprehensive definitions of all ItPay Protocol terms: Adapter, Authorization, Capture, Channel, Channel Adapter, Confirmation, Dunning, Escrow, Event, Idempotency Key, Invoice, Metadata, Payee, Payer, PaymentIntent, Platform, Price, QRCharge, Refund, ServiceManifest, Settlement, Subscription, Webhook, Webhook Endpoint, and 3DS.
+- **This file**: `docs/resources/llms-txt.mdx` — AI-friendly overview of the full documentation scope.
+
+## Core Concepts
+
+### PaymentIntent
+The primary payment primitive. Lifecycle: `requires_payment_method` → `requires_confirmation` → `requires_action` (optional 3DS) → `processing` → `succeeded` | `failed` | `canceled`. Supports two-phase capture (authorize then capture) or automatic capture.
+
+### Subscription
+Recurring billing based on a ServiceManifest + Price combination. ItPay handles dunning (retry logic with escalation), prorations on plan changes, trial periods, and automatic invoice generation.
+
+### ServiceManifest
+A versioned product catalog entry containing one or more Prices. Each Price defines amount, currency, billing interval, trial days, and optional metadata.
+
+### Channel Adapter
+A plugin implementing the `ChannelAdapter` TypeScript interface. Translates ItPay canonical operations into provider-specific API calls. Handles payment creation, refunds, subscriptions, and webhook event conversion.
+
+### Webhooks
+Event-driven notifications delivered via HTTP POST to registered endpoints. Signature verification uses HMAC-SHA256. Retry policy: 7 attempts over ~31 hours with exponential backoff.
+
+## API Basics
+
+- **Base URL**: `https://api.itpay.com`
+- **Authentication**: Bearer token via `Authorization: Bearer <api_key>`
+- **Content-Type**: `application/json`
+- **Idempotency**: POST requests support `Idempotency-Key` header (UUID recommended)
+- **Pagination**: Cursor-based with `starting_after` / `ending_before` + `limit` (1–100)
+- **Webhook Signature Header**: `ItPay-Signature` with format `t=<timestamp>,v1=<signature>`
+- **API Versioning**: Via `ItPay-Version` header or webhook endpoint `api_version` setting
+
+## Supported Currencies
+`usd`, `eur`, `gbp`, `ngn`, `kes`, `ghs`, `zar`, `inr`, `brl`, `jpy`
+
+## Rate Limiting
+429 responses include `Retry-After` header. Implement exponential backoff.
+
+## Object ID Prefixes
+- `pi_` — PaymentIntent
+- `sub_` — Subscription
+- `ref_` — Refund
+- `we_` — Webhook Endpoint
+- `manifest_` — ServiceManifest
+- `payee_` — Payee
+- `payer_` — Payer
+- `channel_` — Channel
+- `inv_` — Invoice
+
+## How AI Agents Should Interact with This Documentation
+
+1. **For endpoint specifics** (parameters, responses, errors): Consult the individual API reference files under `docs/reference/api/`. Each file follows the same template (HTTP Request, Parameters table, Returns, cURL Example, JSON response, Errors table).
+2. **For integration walkthroughs**: See `docs/guides/implementing-a-platform.mdx` for the full Platform integration flow with code examples in Go and TypeScript.
+3. **For building channel adapters**: See `docs/guides/writing-a-channel-adapter.mdx` for the complete adapter interface and a full Paystack adapter implementation.
+4. **For error handling**: See `docs/reference/error-codes.mdx` for all error codes grouped by HTTP status and category.
+5. **For terminology**: See `docs/resources/glossary.mdx` for definitions of all protocol terms.
+6. **For this overview**: This file (`docs/resources/llms-txt.mdx`) provides a high-level map of the entire documentation corpus.
+7. **Code examples**: Provided in both Go and TypeScript where applicable. The canonical interface definitions are in TypeScript.
+8. **When assisting users**: First identify whether they need endpoint reference, integration guidance, adapter development help, or error troubleshooting, then direct them to the appropriate section.
+
+## Related Resources
+
+- [Status Page](https://status.itpay.com) — API uptime and incident reports
+- [API Reference](/reference/api/payments) — Complete endpoint documentation
+- [GitHub](https://github.com/itpay/protocol) — Protocol source code and adapter SDKs

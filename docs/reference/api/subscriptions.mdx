@@ -1,0 +1,372 @@
+---
+title: Subscriptions API
+sidebar_label: Subscriptions
+description: Stripe-style API reference for subscriptions — create, retrieve, list, cancel, and update subscriptions with full parameter tables, response examples, and error codes.
+---
+
+# Subscriptions API
+
+The Subscriptions API enables recurring billing. Subscriptions automatically create payment intents at the interval defined in the associated manifest.
+
+## POST /v1/subscriptions
+
+Create a new subscription.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `manifest_id` | string | yes | ID of the manifest defining the subscription plan |
+| `payee_id` | string | yes | ID of the payee receiving subscription payments |
+| `customer.email` | string | yes | Customer email address |
+| `customer.name` | string | no | Customer full name |
+| `customer.phone` | string | no | Customer phone number |
+| `currency` | string | yes | Three-letter ISO 4217 currency code |
+| `trial_period_days` | integer | no | Number of days for the trial period (default: 0) |
+| `payment_method_id` | string | no | ID of an existing payment method to use |
+| `idempotency_key` | string | no | Idempotency key for safe retries |
+| `metadata` | object | no | Up to 20 key-value pairs of custom data |
+| `description` | string | no | Description of the subscription |
+
+### Returns
+
+Returns a `Subscription` object.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/subscriptions \
+  -H "Authorization: Bearer sk_live_itpay_xyz789" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem_sub_001" \
+  -d '{
+    "manifest_id": "mf_abc123",
+    "payee_id": "pa_xyz456",
+    "currency": "USD",
+    "customer": {
+      "email": "customer@example.com",
+      "name": "Jane Doe"
+    },
+    "trial_period_days": 14,
+    "metadata": {
+      "referrer": "direct",
+      "plan_tier": "premium"
+    }
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "sub_abc123def456",
+  "object": "subscription",
+  "manifest_id": "mf_abc123",
+  "payee_id": "pa_xyz456",
+  "customer": {
+    "email": "customer@example.com",
+    "name": "Jane Doe"
+  },
+  "currency": "USD",
+  "amount": 2999,
+  "interval": "monthly",
+  "status": "trialing",
+  "trial_start": 1717094400,
+  "trial_end": 1718304000,
+  "current_period_start": 1717094400,
+  "current_period_end": 1718304000,
+  "cancel_at_period_end": false,
+  "metadata": {
+    "referrer": "direct",
+    "plan_tier": "premium"
+  },
+  "created": 1717094400,
+  "updated": 1717094400
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_currency` | Unsupported or invalid currency code |
+| 400 | `missing_manifest` | Manifest ID is required |
+| 400 | `invalid_trial_days` | Trial period must be between 0 and 365 days |
+| 404 | `manifest_not_found` | No manifest found with the given ID |
+| 404 | `payee_not_found` | No payee found with the given ID |
+| 402 | `initial_payment_failed` | The initial subscription payment failed |
+
+## GET /v1/subscriptions/:id
+
+Retrieve a subscription by its ID.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the subscription to retrieve |
+
+### Returns
+
+Returns a `Subscription` object.
+
+### Example
+
+```bash
+curl https://api.itpay.io/v1/subscriptions/sub_abc123def456 \
+  -H "Authorization: Bearer sk_live_itpay_xyz789"
+```
+
+### Response
+
+```json
+{
+  "id": "sub_abc123def456",
+  "object": "subscription",
+  "manifest_id": "mf_abc123",
+  "payee_id": "pa_xyz456",
+  "customer": {
+    "email": "customer@example.com",
+    "name": "Jane Doe"
+  },
+  "currency": "USD",
+  "amount": 2999,
+  "interval": "monthly",
+  "status": "active",
+  "trial_start": null,
+  "trial_end": null,
+  "current_period_start": 1717094400,
+  "current_period_end": 1719772800,
+  "cancel_at_period_end": false,
+  "latest_invoice": {
+    "id": "inv_abc123",
+    "amount_due": 2999,
+    "amount_paid": 2999,
+    "status": "paid",
+    "period_start": 1717094400,
+    "period_end": 1719772800
+  },
+  "metadata": {
+    "referrer": "direct"
+  },
+  "created": 1717094400,
+  "updated": 1719772800
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 404 | `subscription_not_found` | No subscription found with the given ID |
+
+## GET /v1/subscriptions
+
+List subscriptions with filtering and pagination.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | integer | no | Number of subscriptions to return (1-100, default: 10) |
+| `starting_after` | string | no | Cursor for pagination — return results after this ID |
+| `ending_before` | string | no | Cursor for pagination — return results before this ID |
+| `status` | string | no | Filter by status (`trialing`, `active`, `past_due`, `canceled`, `incomplete`, `expired`) |
+| `payee_id` | string | no | Filter by payee ID |
+| `manifest_id` | string | no | Filter by manifest ID |
+| `customer.email` | string | no | Filter by customer email |
+
+### Returns
+
+Returns a list with `data`, `has_more`, and pagination cursors.
+
+### Example
+
+```bash
+curl "https://api.itpay.io/v1/subscriptions?limit=25&status=active" \
+  -H "Authorization: Bearer sk_live_itpay_xyz789"
+```
+
+### Response
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "sub_abc123def456",
+      "object": "subscription",
+      "customer": { "email": "customer@example.com" },
+      "amount": 2999,
+      "currency": "USD",
+      "interval": "monthly",
+      "status": "active",
+      "current_period_end": 1719772800,
+      "created": 1717094400
+    },
+    {
+      "id": "sub_ghi789jkl012",
+      "object": "subscription",
+      "customer": { "email": "buyer@example.com" },
+      "amount": 999,
+      "currency": "USD",
+      "interval": "monthly",
+      "status": "trialing",
+      "trial_end": 1718304000,
+      "created": 1717094000
+    }
+  ],
+  "has_more": true,
+  "url": "/v1/subscriptions"
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_status` | Invalid subscription status filter |
+
+## POST /v1/subscriptions/:id/cancel
+
+Cancel an active subscription.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the subscription to cancel |
+| `cancel_at_period_end` | boolean | no | If true, the subscription continues until the end of the current period. If false, cancels immediately. Default: `true` |
+| `reason` | string | no | Reason for cancellation |
+| `metadata` | object | no | Additional metadata for the cancellation |
+
+### Returns
+
+Returns a `Subscription` object with status updated.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/subscriptions/sub_abc123def456/cancel \
+  -H "Authorization: Bearer sk_live_itpay_xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cancel_at_period_end": true,
+    "reason": "customer_request"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "sub_abc123def456",
+  "object": "subscription",
+  "status": "active",
+  "cancel_at_period_end": true,
+  "canceled_at": 1717094600,
+  "current_period_end": 1719772800,
+  "metadata": {
+    "cancellation_reason": "customer_request"
+  },
+  "created": 1717094400,
+  "updated": 1717094600
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `cannot_cancel` | Subscription cannot be canceled in its current status |
+| 404 | `subscription_not_found` | No subscription found with the given ID |
+
+## POST /v1/subscriptions/:id/update
+
+Update a subscription's plan, trial, or metadata.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the subscription to update |
+| `manifest_id` | string | no | New manifest ID to switch to a different plan |
+| `trial_period_days` | integer | no | Extend trial by the given number of days |
+| `metadata` | object | no | Metadata to merge (replaces existing keys) |
+| `description` | string | no | New description |
+| `proration_behavior` | string | no | How to handle proration on plan change (`create_prorations`, `none`). Default: `create_prorations` |
+
+### Returns
+
+Returns a `Subscription` object with updated fields.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/subscriptions/sub_abc123def456/update \
+  -H "Authorization: Bearer sk_live_itpay_xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "manifest_id": "mf_def789",
+    "metadata": {
+      "plan_tier": "enterprise"
+    },
+    "proration_behavior": "create_prorations"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "sub_abc123def456",
+  "object": "subscription",
+  "manifest_id": "mf_def789",
+  "amount": 9999,
+  "currency": "USD",
+  "interval": "monthly",
+  "status": "active",
+  "current_period_start": 1717094400,
+  "current_period_end": 1719772800,
+  "metadata": {
+    "plan_tier": "enterprise"
+  },
+  "created": 1717094400,
+  "updated": 1717094800
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `cannot_update` | Subscription cannot be updated in its current status |
+| 400 | `invalid_proration` | Invalid proration_behavior value |
+| 404 | `subscription_not_found` | No subscription found with the given ID |
+| 404 | `manifest_not_found` | No manifest found with the given ID |
+
+## Subscription Statuses
+
+| Status | Description |
+|--------|-------------|
+| `trialing` | Trial period is active, no payment collected yet |
+| `active` | Subscription is active and payments are being collected |
+| `past_due` | The most recent payment failed; retries are in progress |
+| `canceled` | Subscription has been canceled (immediately or at period end) |
+| `incomplete` | Initial payment failed; subscription is incomplete |
+| `expired` | Subscription has reached its end date or all billing cycles completed |
+
+## Supported Intervals
+
+| Interval | Description |
+|----------|-------------|
+| `daily` | Billed every day |
+| `weekly` | Billed every week |
+| `monthly` | Billed every month |
+| `yearly` | Billed every year |
+
+## Next Steps
+
+- Handle [Refunds](/reference/api/refunds) for subscription charges
+- Monitor subscription events with [Webhooks](/reference/api/webhooks)
+- Review [Error Codes](/reference/error-codes) for troubleshooting

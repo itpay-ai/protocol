@@ -1,0 +1,405 @@
+---
+title: Payments API
+sidebar_label: Payments
+description: Stripe-style API reference for payment intents — create, retrieve, list, confirm, cancel, and capture payment intents with full parameter tables, response examples, and error codes.
+---
+
+# Payments API
+
+The Payments API provides a complete payment intent lifecycle. Use it to create, confirm, capture, cancel, and retrieve one-time and recurring payments.
+
+## POST /v1/payment_intents
+
+Create a new payment intent.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `amount` | integer | yes | Amount in smallest currency unit (cents, kobo, etc.) |
+| `currency` | string | yes | Three-letter ISO 4217 currency code (e.g., "USD", "NGN") |
+| `manifest_id` | string | yes | ID of the manifest defining payment rules |
+| `payee_id` | string | yes | ID of the payee receiving the payment |
+| `channels` | `array<string>` | no | Allowed payment channels (e.g., ["card", "bank_transfer"]) |
+| `customer.email` | string | yes | Customer email address |
+| `customer.name` | string | no | Customer full name |
+| `customer.phone` | string | no | Customer phone number |
+| `idempotency_key` | string | no | Idempotency key for safe retries |
+| `description` | string | no | Description of the payment |
+| `metadata` | object | no | Up to 20 key-value pairs of custom data |
+| `return_url` | string | no | URL to redirect the customer after payment |
+
+### Returns
+
+Returns a `PaymentIntent` object.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/payment_intents \
+  -H "Authorization: Bearer sk_live_itpay_xyz789" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem_req_001" \
+  -d '{
+    "amount": 2999,
+    "currency": "USD",
+    "manifest_id": "mf_abc123",
+    "payee_id": "pa_xyz456",
+    "channels": ["card", "bank_transfer"],
+    "customer": {
+      "email": "customer@example.com",
+      "name": "Jane Doe"
+    },
+    "description": "Premium Widget Package - Monthly",
+    "metadata": {
+      "plan_tier": "premium"
+    }
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "pi_abc123def456",
+  "object": "payment_intent",
+  "amount": 2999,
+  "amount_capturable": 0,
+  "amount_received": 0,
+  "currency": "USD",
+  "status": "requires_payment_method",
+  "client_secret": "pi_abc123def456_secret_xyz789",
+  "manifest_id": "mf_abc123",
+  "payee_id": "pa_xyz456",
+  "customer": {
+    "email": "customer@example.com",
+    "name": "Jane Doe"
+  },
+  "channels": ["card", "bank_transfer"],
+  "description": "Premium Widget Package - Monthly",
+  "metadata": {
+    "plan_tier": "premium"
+  },
+  "created": 1717094400,
+  "updated": 1717094400
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_amount` | Amount must be greater than 0 |
+| 400 | `invalid_currency` | Unsupported or invalid currency code |
+| 400 | `missing_manifest` | Manifest ID is required |
+| 402 | `payment_failed` | Payment processing failed |
+| 404 | `manifest_not_found` | No manifest found with the given ID |
+| 404 | `payee_not_found` | No payee found with the given ID |
+
+## GET /v1/payment_intents/:id
+
+Retrieve a payment intent by its ID.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the payment intent to retrieve |
+
+### Returns
+
+Returns a `PaymentIntent` object.
+
+### Example
+
+```bash
+curl https://api.itpay.io/v1/payment_intents/pi_abc123def456 \
+  -H "Authorization: Bearer sk_live_itpay_xyz789"
+```
+
+### Response
+
+```json
+{
+  "id": "pi_abc123def456",
+  "object": "payment_intent",
+  "amount": 2999,
+  "amount_capturable": 0,
+  "amount_received": 2999,
+  "currency": "USD",
+  "status": "succeeded",
+  "client_secret": "pi_abc123def456_secret_xyz789",
+  "manifest_id": "mf_abc123",
+  "payee_id": "pa_xyz456",
+  "customer": {
+    "email": "customer@example.com",
+    "name": "Jane Doe"
+  },
+  "channels": ["card"],
+  "payment_method": {
+    "type": "card",
+    "card": {
+      "brand": "visa",
+      "last4": "4242",
+      "exp_month": 12,
+      "exp_year": 2028
+    }
+  },
+  "description": "Premium Widget Package - Monthly",
+  "metadata": {
+    "plan_tier": "premium"
+  },
+  "created": 1717094400,
+  "updated": 1717094500
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 404 | `payment_intent_not_found` | No payment intent found with the given ID |
+
+## GET /v1/payment_intents
+
+List payment intents with filtering and pagination.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | integer | no | Number of intents to return (1-100, default: 10) |
+| `starting_after` | string | no | Cursor for pagination — return results after this ID |
+| `ending_before` | string | no | Cursor for pagination — return results before this ID |
+| `status` | string | no | Filter by status (`requires_payment_method`, `requires_confirmation`, `requires_capture`, `succeeded`, `failed`, `canceled`) |
+| `payee_id` | string | no | Filter by payee ID |
+| `manifest_id` | string | no | Filter by manifest ID |
+| `created.gte` | integer | no | Unix timestamp — return intents created at or after |
+| `created.lte` | integer | no | Unix timestamp — return intents created at or before |
+
+### Returns
+
+Returns a list with `data`, `has_more`, and pagination cursors.
+
+### Example
+
+```bash
+curl "https://api.itpay.io/v1/payment_intents?limit=25&status=succeeded" \
+  -H "Authorization: Bearer sk_live_itpay_xyz789"
+```
+
+### Response
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "pi_abc123def456",
+      "object": "payment_intent",
+      "amount": 2999,
+      "currency": "USD",
+      "status": "succeeded",
+      "customer": { "email": "customer@example.com" },
+      "created": 1717094400
+    },
+    {
+      "id": "pi_ghi789jkl012",
+      "object": "payment_intent",
+      "amount": 999,
+      "currency": "USD",
+      "status": "requires_payment_method",
+      "customer": { "email": "buyer@example.com" },
+      "created": 1717094000
+    }
+  ],
+  "has_more": true,
+  "url": "/v1/payment_intents"
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_limit` | Limit must be between 1 and 100 |
+
+## POST /v1/payment_intents/:id/confirm
+
+Confirm a payment intent, triggering the actual payment processing.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the payment intent to confirm |
+| `payment_method_id` | string | no | ID of a saved payment method to use |
+| `payment_method_data` | object | no | New payment method details (type, card number, etc.) |
+| `return_url` | string | no | URL to redirect after payment completes |
+
+### Returns
+
+Returns a `PaymentIntent` object with the updated status.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/payment_intents/pi_abc123def456/confirm \
+  -H "Authorization: Bearer sk_live_itpay_xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payment_method_data": {
+      "type": "card",
+      "card": {
+        "number": "4242424242424242",
+        "exp_month": 12,
+        "exp_year": 2028,
+        "cvc": "123"
+      }
+    }
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "pi_abc123def456",
+  "object": "payment_intent",
+  "amount": 2999,
+  "status": "succeeded",
+  "amount_received": 2999,
+  "payment_method": {
+    "type": "card",
+    "card": {
+      "brand": "visa",
+      "last4": "4242"
+    }
+  },
+  "created": 1717094400,
+  "updated": 1717094500
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `already_confirmed` | Payment intent is already confirmed |
+| 400 | `invalid_payment_method` | The provided payment method is invalid |
+| 402 | `payment_failed` | Payment processing failed |
+| 404 | `payment_intent_not_found` | No payment intent found with the given ID |
+
+## POST /v1/payment_intents/:id/cancel
+
+Cancel a payment intent before it is captured.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the payment intent to cancel |
+| `reason` | string | no | Reason for cancellation (`duplicate`, `fraudulent`, `requested_by_customer`, `abandoned`) |
+
+### Returns
+
+Returns a `PaymentIntent` object with status set to `canceled`.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/payment_intents/pi_abc123def456/cancel \
+  -H "Authorization: Bearer sk_live_itpay_xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "requested_by_customer"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "pi_abc123def456",
+  "object": "payment_intent",
+  "amount": 2999,
+  "status": "canceled",
+  "cancellation_reason": "requested_by_customer",
+  "created": 1717094400,
+  "updated": 1717094600
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `cannot_cancel` | Payment intent cannot be canceled in its current status |
+| 404 | `payment_intent_not_found` | No payment intent found with the given ID |
+
+## POST /v1/payment_intents/:id/capture
+
+Capture funds from an authorized payment intent. Only applicable for intents with `requires_capture` status.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the payment intent to capture |
+| `amount_to_capture` | integer | no | Amount to capture (must be &lt;= authorized amount). Defaults to full amount. |
+
+### Returns
+
+Returns a `PaymentIntent` object with status set to `succeeded`.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/payment_intents/pi_abc123def456/capture \
+  -H "Authorization: Bearer sk_live_itpay_xyz789" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount_to_capture": 2999
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "pi_abc123def456",
+  "object": "payment_intent",
+  "amount": 2999,
+  "amount_capturable": 0,
+  "amount_received": 2999,
+  "status": "succeeded",
+  "created": 1717094400,
+  "updated": 1717094700
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `cannot_capture` | Payment intent is not in `requires_capture` status |
+| 400 | `capture_amount_exceeded` | capture amount exceeds the authorized amount |
+| 404 | `payment_intent_not_found` | No payment intent found with the given ID |
+
+## Payment Intent Statuses
+
+| Status | Description |
+|--------|-------------|
+| `requires_payment_method` | Intent created but no payment method attached |
+| `requires_confirmation` | Payment method attached, needs confirmation |
+| `requires_capture` | Authorized but funds not yet captured |
+| `processing` | Payment is being processed |
+| `succeeded` | Payment completed successfully |
+| `failed` | Payment processing failed |
+| `canceled` | Payment was canceled before completion |
+
+## Next Steps
+
+- Manage [Subscriptions](/reference/api/subscriptions) for recurring billing
+- Process [Refunds](/reference/api/refunds) for completed payments
+- Configure [Webhooks](/reference/api/webhooks) for real-time payment event notifications

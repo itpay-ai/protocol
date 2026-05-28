@@ -1,0 +1,596 @@
+---
+title: Writing a Channel Adapter
+sidebar_label: Channel Adapters
+description: Complete guide on how to write a custom channel adapter for the ItPay Protocol, including TypeScript interface, full Paystack implementation, registration, test harness, and best practices.
+---
+
+# Writing a Channel Adapter
+
+A **Channel Adapter** bridges the ItPay Protocol with an external payment provider (e.g., Stripe, Paystack, Flutterwave, Adyen). This guide shows you how to build a custom adapter from scratch.
+
+## ChannelAdapter Interface
+
+Every adapter must implement the `ChannelAdapter` interface:
+
+```typescript
+// @itpay/protocol/core/interfaces/channel-adapter.ts
+
+export interface ChannelAdapter {
+  /** Unique identifier for this channel (e.g., 'paystack', 'stripe') */
+  readonly name: string;
+
+  /** Human-readable display name */
+  readonly displayName: string;
+
+  /** Supported ISO 4217 currency codes */
+  readonly supportedCurrencies: string[];
+
+  /** Supported payment method types */
+  readonly supportedPaymentMethods: PaymentMethodType[];
+
+  /** Initialize the adapter with provider credentials */
+  initialize(config: ChannelConfig): Promise<void>;
+
+  /** Create a payment session for the given intent */
+  createPayment(intent: PaymentIntent, options?: PaymentOptions): Promise<PaymentResult>;
+
+  /** Confirm or complete a payment that requires client-side confirmation */
+  confirmPayment(sessionId: string, confirmationData: Record<string, unknown>): Promise<PaymentResult>;
+
+  /** Retrieve the current status of a payment */
+  getPaymentStatus(providerPaymentId: string): Promise<PaymentStatus>;
+
+  /** Cancel or void a payment before it settles */
+  cancelPayment(providerPaymentId: string, reason?: string): Promise<CancelResult>;
+
+  /** Create a subscription on the provider side */
+  createSubscription(
+    subscription: Subscription,
+    paymentMethodId: string
+  ): Promise<SubscriptionResult>;
+
+  /** Cancel a subscription on the provider side */
+  cancelSubscription(providerSubscriptionId: string): Promise<CancelResult>;
+
+  /** Process a refund through the provider */
+  createRefund(paymentId: string, amount: number, reason?: string): Promise<RefundResult>;
+
+  /** Verify a webhook signature from the provider */
+  verifyWebhookSignature(
+    payload: Buffer,
+    signature: string,
+    secret: string
+  ): Promise<boolean>;
+
+  /** Parse a provider webhook payload into a normalized ItPay event */
+  parseWebhookEvent(payload: Record<string, unknown>): Promise<NormalizedWebhookEvent>;
+
+  /** Health check the provider connection */
+  healthCheck(): Promise<HealthStatus>;
+}
+
+export interface ChannelConfig {
+  apiKey?: string;
+  secretKey?: string;
+  webhookSecret?: string;
+  environment: 'sandbox' | 'production';
+  baseURL?: string;
+  timeout?: number;
+  metadata?: Record<string, string>;
+}
+
+export interface PaymentResult {
+  success: boolean;
+  providerPaymentId: string;
+  status: 'succeeded' | 'pending' | 'failed';
+  amount: number;
+  currency: string;
+  clientSecret?: string;
+  nextAction?: NextAction;
+  error?: ProviderError;
+}
+
+export interface NextAction {
+  type: 'redirect' | 'qr_code' | 'otp' | '3ds';
+  url?: string;
+  qrCodeData?: string;
+}
+
+export interface NormalizedWebhookEvent {
+  type: WebhookEventType;
+  providerPaymentId?: string;
+  providerSubscriptionId?: string;
+  data: Record<string, unknown>;
+  raw: Record<string, unknown>;
+}
+```
+
+## Full Paystack Adapter Implementation
+
+Below is a complete Paystack adapter (~200 lines) implementing all interface methods:
+
+```typescript
+// @itpay/protocol/channels/paystack/paystack-adapter.ts
+
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import {
+  ChannelAdapter,
+  ChannelConfig,
+  PaymentIntent,
+  PaymentOptions,
+  PaymentResult,
+  PaymentStatus,
+  CancelResult,
+  Subscription,
+  SubscriptionResult,
+  RefundResult,
+  HealthStatus,
+  NormalizedWebhookEvent,
+  NextAction,
+  ProviderError,
+} from '@itpay/protocol/core';
+
+const PAYSTACK_API = 'https://api.paystack.co';
+
+export class PaystackAdapter implements ChannelAdapter {
+  readonly name = 'paystack';
+  readonly displayName = 'Paystack';
+  readonly supportedCurrencies = ['NGN', 'GHS', 'KES', 'ZAR', 'USD'];
+  readonly supportedPaymentMethods = ['card', 'bank_transfer', 'ussd', 'qr', 'mobile_money'];
+
+  private client!: AxiosInstance;
+  private config!: ChannelConfig;
+  private initialized = false;
+
+  async initialize(config: ChannelConfig): Promise<void> {
+    this.config = config;
+    this.client = axios.create({
+      baseURL: config.baseURL || PAYSTACK_API,
+      timeout: config.timeout || 30000,
+      headers: {
+        Authorization: `Bearer ${config.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    // Verify connectivity
+    const health = await this.healthCheck();
+    if (!health.healthy) {
+      throw new Error(`Paystack initialization failed: ${health.message}`);
+    }
+    this.initialized = true;
+  }
+
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      throw new Error('Adapter not initialized. Call initialize() first.');
+    }
+  }
+
+  async createPayment(
+    intent: PaymentIntent,
+    options?: PaymentOptions
+  ): Promise<PaymentResult> {
+    this.ensureInitialized();
+
+    try {
+      const payload: Record<string, unknown> = {
+        email: intent.customer.email,
+        amount: String(intent.amount), // Paystack uses kobo/cents as string
+        currency: intent.currency,
+        reference: intent.id,
+        callback_url: options?.returnUrl || `${this.config.baseURL}/callback`,
+        metadata: {
+          itpay_intent_id: intent.id,
+          itpay_manifest_id: intent.manifestId,
+          ...intent.metadata,
+        },
+      };
+
+      if (options?.paymentMethodId) {
+        // Use existing authorization
+        payload.authorization_code = options.paymentMethodId;
+      }
+
+      const response = await this.client.post('/transaction/initialize', payload);
+
+      return {
+        success: true,
+        providerPaymentId: response.data.data.reference,
+        status: 'pending',
+        amount: intent.amount,
+        currency: intent.currency,
+        clientSecret: response.data.data.access_code,
+        nextAction: {
+          type: 'redirect',
+          url: response.data.data.authorization_url,
+        },
+      };
+    } catch (err) {
+      return this.handleError(err);
+    }
+  }
+
+  async confirmPayment(
+    sessionId: string,
+    confirmationData: Record<string, unknown>
+  ): Promise<PaymentResult> {
+    this.ensureInitialized();
+
+    try {
+      const reference = confirmationData.reference as string || sessionId;
+      const response = await this.client.get(`/transaction/verify/${reference}`);
+      const data = response.data.data;
+
+      return {
+        success: data.status === 'success',
+        providerPaymentId: data.id?.toString() || reference,
+        status: data.status === 'success' ? 'succeeded' : 'failed',
+        amount: parseInt(data.amount as string, 10),
+        currency: data.currency as string,
+        error: data.status !== 'success' ? {
+          code: data.gateway_response,
+          message: `Paystack: ${data.gateway_response}`,
+        } : undefined,
+      };
+    } catch (err) {
+      return this.handleError(err);
+    }
+  }
+
+  async getPaymentStatus(providerPaymentId: string): Promise<PaymentStatus> {
+    this.ensureInitialized();
+
+    try {
+      const response = await this.client.get(`/transaction/verify/${providerPaymentId}`);
+      const data = response.data.data;
+
+      return {
+        providerPaymentId: data.id?.toString() || providerPaymentId,
+        status: this.mapPaystackStatus(data.status),
+        amount: parseInt(data.amount as string, 10),
+        currency: data.currency as string,
+        paidAt: data.paid_at ? new Date(data.paid_at) : undefined,
+        metadata: data.metadata,
+      };
+    } catch (err) {
+      if (err instanceof AxiosError && err.response?.status === 404) {
+        return {
+          providerPaymentId,
+          status: 'unknown',
+          amount: 0,
+          currency: 'NGN',
+        };
+      }
+      throw err;
+    }
+  }
+
+  async cancelPayment(providerPaymentId: string, reason?: string): Promise<CancelResult> {
+    this.ensureInitialized();
+
+    try {
+      // Paystack does not support direct transaction voiding.
+      // We attempt a refund instead.
+      const response = await this.client.post('/refund', {
+        transaction: providerPaymentId,
+        reason: reason || 'ItPay: cancel_request',
+      });
+
+      return {
+        success: response.data.status,
+        providerCancelId: response.data.data?.id?.toString() || providerPaymentId,
+        status: 'refunded',
+      };
+    } catch (err) {
+      if (err instanceof AxiosError && err.response?.status === 400) {
+        // Transaction might already be refunded or not refundable
+        return {
+          success: false,
+          providerCancelId: providerPaymentId,
+          status: 'failed',
+          error: {
+            code: 'CANCEL_FAILED',
+            message: err.response.data?.message || 'Unable to cancel payment',
+          },
+        };
+      }
+      return this.handleError(err);
+    }
+  }
+
+  async createSubscription(
+    subscription: Subscription,
+    paymentMethodId: string
+  ): Promise<SubscriptionResult> {
+    this.ensureInitialized();
+
+    try {
+      // Paystack uses plans and subscriptions
+      // First, ensure a plan exists (or create one from manifest)
+      const planPayload = {
+        name: subscription.metadata?.plan_name || `plan_${subscription.manifestId}`,
+        amount: String(subscription.amount),
+        interval: this.mapInterval(subscription.interval),
+        currency: subscription.currency,
+        description: subscription.description,
+      };
+
+      const planResponse = await this.client.post('/plan', planPayload);
+      const planCode = planResponse.data.data.plan_code;
+
+      const subPayload: Record<string, unknown> = {
+        customer: subscription.customer.email,
+        plan: planCode,
+        authorization: paymentMethodId,
+        start_date: subscription.trialEnd?.toISOString(),
+        metadata: {
+          itpay_subscription_id: subscription.id,
+          itpay_manifest_id: subscription.manifestId,
+        },
+      };
+
+      const response = await this.client.post('/subscription', subPayload);
+
+      return {
+        success: true,
+        providerSubscriptionId: response.data.data.subscription_code,
+        status: response.data.data.status === 'active' ? 'active' : 'pending',
+        nextBillingDate: response.data.data.next_payment_date
+          ? new Date(response.data.data.next_payment_date)
+          : undefined,
+      };
+    } catch (err) {
+      return this.handleError(err);
+    }
+  }
+
+  async cancelSubscription(providerSubscriptionId: string): Promise<CancelResult> {
+    this.ensureInitialized();
+
+    try {
+      const tokenResponse = await this.client.post(`/subscription/${providerSubscriptionId}/manage/link`, {
+        action: 'cancel',
+      });
+
+      return {
+        success: tokenResponse.data.status,
+        providerCancelId: providerSubscriptionId,
+        status: 'canceled',
+      };
+    } catch (err) {
+      return this.handleError(err);
+    }
+  }
+
+  async createRefund(
+    paymentId: string,
+    amount: number,
+    reason?: string
+  ): Promise<RefundResult> {
+    this.ensureInitialized();
+
+    try {
+      const refundPayload: Record<string, unknown> = {
+        transaction: paymentId,
+        amount: String(amount),
+        reason: reason || 'ItPay refund',
+      };
+
+      const response = await this.client.post('/refund', refundPayload);
+      const data = response.data.data;
+
+      return {
+        success: response.data.status,
+        providerRefundId: data.id?.toString() || paymentId,
+        status: data.status === 'pending' ? 'processing' : 'succeeded',
+        amount: parseInt(data.amount as string, 10),
+        currency: data.currency as string,
+      };
+    } catch (err) {
+      return this.handleError(err);
+    }
+  }
+
+  async verifyWebhookSignature(
+    payload: Buffer,
+    signature: string,
+    secret: string
+  ): Promise<boolean> {
+    const crypto = await import('crypto');
+    const hash = crypto
+      .createHmac('sha512', secret)
+      .update(payload)
+      .digest('hex');
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
+  }
+
+  async parseWebhookEvent(
+    payload: Record<string, unknown>
+  ): Promise<NormalizedWebhookEvent> {
+    const event = payload as PaystackWebhookPayload;
+
+    const eventMap: Record<string, string> = {
+      'charge.success': 'payment_intent.succeeded',
+      'charge.failed': 'payment_intent.failed',
+      'transfer.success': 'transfer.completed',
+      'transfer.failed': 'transfer.failed',
+      'subscription.create': 'subscription.created',
+      'subscription.renew': 'subscription.renewed',
+      'subscription.expire': 'subscription.expired',
+      'refund.processed': 'refund.completed',
+      'refund.failed': 'refund.failed',
+    };
+
+    return {
+      type: (eventMap[event.event] || event.event) as NormalizedWebhookEvent['type'],
+      providerPaymentId: event.data?.reference,
+      providerSubscriptionId: event.data?.subscription_code,
+      data: event.data as Record<string, unknown>,
+      raw: payload,
+    };
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    try {
+      const response = await this.client.get('/balance');
+      return {
+        healthy: response.data.status,
+        latency: response.config.timeout || 0,
+        message: 'Paystack API is reachable',
+      };
+    } catch (err) {
+      return {
+        healthy: false,
+        latency: 0,
+        message: err instanceof Error ? err.message : 'Unknown error',
+      };
+    }
+  }
+
+  private mapInterval(interval: string): string {
+    const map: Record<string, string> = {
+      daily: 'daily',
+      weekly: 'weekly',
+      monthly: 'monthly',
+      yearly: 'annually',
+    };
+    return map[interval] || 'monthly';
+  }
+
+  private mapPaystackStatus(status: string): PaymentStatus['status'] {
+    switch (status) {
+      case 'success':
+        return 'succeeded';
+      case 'pending':
+        return 'pending';
+      case 'failed':
+        return 'failed';
+      case 'reversed':
+        return 'reversed';
+      default:
+        return 'unknown';
+    }
+  }
+
+  private handleError(err: unknown): never {
+    if (err instanceof AxiosError && err.response) {
+      const data = err.response.data as Record<string, unknown>;
+      throw {
+        code: `PAYSTACK_${err.response.status}`,
+        message: (data?.message as string) || err.message,
+        providerCode: data?.code as string,
+      } as ProviderError;
+    }
+    throw {
+      code: 'PAYSTACK_NETWORK',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    } as ProviderError;
+  }
+}
+
+interface PaystackWebhookPayload {
+  event: string;
+  data: {
+    reference?: string;
+    subscription_code?: string;
+    status?: string;
+    [key: string]: unknown;
+  };
+}
+```
+
+## Registering the Adapter
+
+Once your adapter is implemented, register it with the ItPay Protocol runtime:
+
+```typescript
+import { ItPayClient } from '@itpay/protocol';
+import { PaystackAdapter } from './paystack-adapter';
+
+const client = new ItPayClient({
+  apiKey: 'pk_live_itpay_abc123',
+  secretKey: 'sk_live_itpay_xyz789',
+});
+
+// Register the custom adapter
+const paystackAdapter = new PaystackAdapter();
+client.channels.register('paystack', paystackAdapter);
+
+// Initialize with credentials
+await paystackAdapter.initialize({
+  secretKey: 'sk_live_paystack_abc123',
+  environment: 'sandbox',
+});
+
+// The adapter is now ready to handle payments
+const payment = await client.payments.create({
+  amount: 50000, // 500 NGN
+  currency: 'NGN',
+  channel: 'paystack',
+  customer: { email: 'buyer@example.com' },
+});
+```
+
+## Test Harness Usage
+
+Use the built-in channel test harness to validate your adapter:
+
+```typescript
+import { ChannelTestHarness } from '@itpay/protocol/testing';
+import { PaystackAdapter } from './paystack-adapter';
+
+const harness = new ChannelTestHarness({
+  adapter: new PaystackAdapter(),
+  config: {
+    secretKey: 'sk_test_paystack_abc123',
+    environment: 'sandbox',
+  },
+  testCases: {
+    createPayment: {
+      amount: 50000,
+      currency: 'NGN',
+      customer: { email: 'test@example.com' },
+    },
+    refundPayment: {
+      amount: 50000,
+    },
+    healthCheck: {},
+  },
+});
+
+await harness.runAll();
+// Output:
+// ✓ createPayment: succeeded (2.3s)
+// ✓ getPaymentStatus: succeeded (0.8s)
+// ✓ refundPayment: succeeded (1.5s)
+// ✓ healthCheck: healthy (0.4s)
+```
+
+## Best Practices
+
+1. **Idempotency**: Always support idempotency keys to prevent duplicate charges.
+2. **Error Mapping**: Map provider-specific errors to standard ItPay error codes.
+3. **Timeout Handling**: Set reasonable timeouts (15-30s) and retry transient failures.
+4. **Logging**: Log all provider requests and responses at debug level for troubleshooting.
+5. **Webhook Idempotency**: Deduplicate webhook events using provider event IDs.
+6. **Rate Limiting**: Respect the provider's rate limits; implement exponential backoff.
+7. **Sandbox Testing**: Always test in sandbox mode before production deployment.
+8. **Secrets Management**: Never hardcode credentials; use environment variables or a secrets manager.
+
+## Common Pitfalls
+
+| Pitfall | Consequence | Solution |
+|---------|-------------|----------|
+| Not handling webhook failures | Missed payment events, stale data | Implement a webhook retry queue |
+| Ignoring provider rate limits | 429 errors, blocked API keys | Add rate limiter with backoff |
+| Storing raw provider IDs only | Cannot trace payments across systems | Always store both provider and ItPay IDs |
+| Missing currency validation | Silent failures on unsupported currencies | Validate against `supportedCurrencies` |
+| Sync webhook processing | Blocking other webhooks, timeouts | Process webhooks asynchronously |
+| Not testing all payment flows | Production incidents with edge cases | Use the test harness for every new version |
+
+## Next Steps
+
+- Deploy your adapter with the [Platform Implementation Guide](/guides/implementing-a-platform)
+- Browse all [API Reference](/reference/api/payments) for end-to-end payment flows
+- Configure [Webhook Endpoints](/reference/api/webhooks) for event monitoring

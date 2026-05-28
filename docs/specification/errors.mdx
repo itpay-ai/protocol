@@ -1,0 +1,322 @@
+---
+sidebar_position: 6
+---
+
+# Errors
+
+## Overview
+
+The ItPay Protocol uses a consistent, structured error format across all API endpoints. Errors follow the conventions established by Stripe and other major payment APIs, making integration familiar and predictable.
+
+All error responses use the appropriate HTTP status code and return a JSON body with a standard structure.
+
+## Error Response Format
+
+Every error response follows this structure:
+
+```json
+{
+  "error": {
+    "type": "invalid_request_error",
+    "code": "parameter_missing",
+    "message": "Missing required parameter: 'amount'.",
+    "param": "amount",
+    "doc_url": "https://docs.itpay.io/api/errors#parameter_missing",
+    "request_id": "req_8Hk2mN4qR7wX9"
+  }
+}
+```
+
+### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `error.type` | string | High-level category of the error |
+| `error.code` | string | Machine-readable error code |
+| `error.message` | string | Human-readable description of what went wrong |
+| `error.param` | string or null | The parameter that caused the error (if applicable) |
+| `error.doc_url` | string | Link to documentation for this error code |
+| `error.request_id` | string | Unique identifier for the request (use when contacting support) |
+
+### Response Headers
+
+| Header | Description |
+|--------|-------------|
+| `Itpay-Request-Id` | Same as `error.request_id` |
+| `Itpay-Version` | The API version used for this request |
+| `Itpay-Error-Type` | The error type for quick machine parsing |
+| `Retry-After` | Present only for rate limit errors |
+
+## Error Types
+
+| Type | HTTP Status | Description |
+|------|-------------|-------------|
+| `api_error` | 500 Internal Server Error | An unexpected server-side error occurred. These are rare and should be reported. Retry with exponential backoff. |
+| `invalid_request_error` | 400 Bad Request | The request was malformed or contained invalid parameters. Fix the request before retrying. |
+| `authentication_error` | 401 Unauthorized | The API key was missing, invalid, or revoked. Check your authentication credentials. |
+| `authorization_error` | 403 Forbidden | The API key does not have permission to perform the requested action. Check key scopes. |
+| `not_found_error` | 404 Not Found | The requested resource does not exist. Check the resource ID. |
+| `payment_error` | 402 Payment Required | The payment operation failed due to a payment-specific issue (insufficient funds, card declined, etc.). |
+| `rate_limit_error` | 429 Too Many Requests | Too many requests were sent in a short period. Respect the `Retry-After` header and implement backoff. |
+
+### Type Selection Logic
+
+When integrating, use the error `type` for general flow control and the `code` for specific handling:
+
+```python
+def handle_api_error(error):
+    if error["type"] == "payment_error":
+        logger.warning(f"Payment failed: {error['code']}")
+        notify_user_payment_failed(error)
+    elif error["type"] == "rate_limit_error":
+        retry_after = int(response.headers.get("Retry-After", 5))
+        time.sleep(retry_after)
+        retry_request()
+    elif error["type"] == "api_error":
+        logger.error(f"Server error: {error}")
+        retry_with_backoff()
+    else:
+        logger.error(f"Unhandled error: {error}")
+```
+
+## Error Codes
+
+### General Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `api_error` | 500 | "An unexpected error occurred. Please try again later." | Generic server error with no specific code |
+| `parameter_unknown` | 400 | "Unknown parameter: `{param}`." | The request contained an unrecognized parameter |
+| `parameter_missing` | 400 | "Missing required parameter: `{param}`." | A required parameter was not provided |
+| `parameter_invalid` | 400 | "Invalid value for parameter `{param}`: `{reason}`." | A parameter value failed validation |
+| `parameter_out_of_range` | 400 | "Parameter `{param}` is out of range." | Numeric parameter outside allowed bounds |
+| `parameter_type_invalid` | 400 | "Expected `{expected_type}` for parameter `{param}`, got `{actual_type}`." | Parameter had the wrong JSON type |
+| `body_invalid` | 400 | "The request body could not be parsed as JSON." | Malformed JSON in request body |
+| `body_size_exceeded` | 413 | "Request body exceeds maximum size of `{max_size}` bytes." | Payload too large |
+
+### Authentication Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `api_key_missing` | 401 | "No API key provided. Set the Authorization header." | Missing `Authorization: Bearer <key>` header |
+| `api_key_invalid` | 401 | "The API key provided is invalid or has been revoked." | Key not found or revoked |
+| `api_key_expired` | 401 | "The API key has expired. Generate a new key." | Key past its expiration date |
+| `api_key_format` | 401 | "Invalid API key format. Expected key starting with 'ip_live_' or 'ip_test_'." | Key doesn't match expected pattern |
+| `webhook_secret_invalid` | 401 | "Invalid webhook signing secret." | Webhook signature verification failed |
+
+### Authorization Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `permission_denied` | 403 | "Your API key does not have permission to perform this action." | Insufficient key scope |
+| `account_inactive` | 403 | "The account is inactive. Please contact support." | Account suspended or disabled |
+| `livemode_mismatch` | 403 | "Cannot use a test key to access a live resource." | Test key used on live data or vice versa |
+| `ip_not_whitelisted` | 403 | "Request from IP `{ip}` is not whitelisted for this API key." | IP restriction violated |
+| `feature_not_enabled` | 403 | "Feature '`{feature}`' is not enabled for this account." | Account plan doesn't include feature |
+
+### Resource Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `resource_missing` | 404 | "No `{resource_type}` found with ID '`{id}`'." | Resource doesn't exist |
+| `resource_deleted` | 404 | "The `{resource_type}` '`{id}`' has been deleted." | Resource was deleted |
+| `resource_conflict` | 409 | "The `{resource_type}` '`{id}`' is in an invalid state for this operation." | State transition not allowed |
+| `resource_already_exists` | 409 | "A `{resource_type}` with this `{field}` already exists." | Duplicate resource creation attempt |
+| `idempotency_key_reused` | 409 | "Idempotency key '`{key}`' was used with a different request payload." | Idempotency key collision with different params |
+
+### Payment Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `payment_declined` | 402 | "The payment was declined." | Generic decline (no specific reason) |
+| `payment_insufficient_funds` | 402 | "Insufficient funds to complete the payment." | Account balance too low |
+| `payment_card_declined` | 402 | "The card was declined: `{reason}`." | Card declined by issuer |
+| `payment_expired_card` | 402 | "The card has expired." | Card past expiration date |
+| `payment_invalid_cvv` | 402 | "The CVV code is incorrect." | CVV validation failed |
+| `payment_invalid_expiry` | 402 | "The card expiration date is invalid." | Invalid month/year combination |
+| `payment_processing_error` | 402 | "An error occurred while processing the payment." | Payment processor error |
+| `payment_authentication_required` | 402 | "Strong customer authentication is required." | 3D Secure / SCA challenge needed |
+| `payment_limit_exceeded` | 402 | "Payment exceeds account or card limits." | Amount exceeds allowed limit |
+| `payment_currency_not_supported` | 402 | "Currency '`{currency}`' is not supported." | Unsupported or invalid currency |
+| `payment_refund_failed` | 402 | "Refund failed: `{reason}`." | Could not process refund |
+| `payment_refund_amount_exceeded` | 402 | "Refund amount exceeds the capture amount." | Refund > original payment |
+| `payment_already_refunded` | 402 | "This payment has already been fully refunded." | Duplicate refund attempt |
+| `payment_capture_failed` | 402 | "Failed to capture the authorized payment." | Capture processing failed |
+| `payment_expired_authorization` | 402 | "The payment authorization has expired." | Authorization window passed |
+
+### Rate Limit Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `rate_limit_exceeded` | 429 | "Too many requests. Retry after `{retry_after}` seconds." | General rate limit hit |
+| `rate_limit_burst_exceeded` | 429 | "Burst rate limit exceeded. Slow down request rate." | Exceeded burst window limit |
+| `rate_limit_concurrent_exceeded` | 429 | "Too many concurrent requests. Limit: `{max_concurrent}`." | Exceeded concurrent request limit |
+
+### Webhook Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `webhook_url_invalid` | 400 | "Webhook URL must use HTTPS." | Non-HTTPS URL provided |
+| `webhook_url_unreachable` | 400 | "Webhook URL could not be reached for verification." | DNS or connection failure |
+| `webhook_secret_weak` | 400 | "Webhook signing secret must be at least 32 characters." | Secret too short |
+| `webhook_event_type_invalid` | 400 | "Unknown event type: '`{event_type}`'." | Invalid event type in filter |
+
+### Validation Errors
+
+| Code | HTTP Status | Message Template | Description |
+|------|-------------|------------------|-------------|
+| `amount_invalid` | 400 | "Amount must be a positive integer in the smallest currency unit." | Negative or zero amount |
+| `amount_too_small` | 400 | "Amount must be at least `{min_amount}` `{currency}`." | Below minimum |
+| `amount_too_large` | 400 | "Amount must not exceed `{max_amount}` `{currency}`." | Above maximum |
+| `currency_invalid` | 400 | "Currency '`{currency}`' is not supported." | Unrecognized ISO 4217 code |
+| `metadata_size_exceeded` | 400 | "Metadata exceeds maximum of `{max_keys}` keys or `{max_bytes}` bytes." | Metadata too large |
+| `idempotency_key_invalid` | 400 | "Idempotency key must be a string with maximum 255 characters." | Invalid idempotency key format |
+| `timestamp_invalid` | 400 | "Timestamp is in the future or too far in the past." | Out of tolerance window |
+
+## Rate Limiting
+
+### Rate Limit Algorithm
+
+The ItPay Protocol uses a **token bucket** algorithm for rate limiting. Each API key has a bucket that refills at a steady rate.
+
+### Rate Limits by Plan
+
+| Plan | Requests per Second | Burst Capacity | Concurrent Requests |
+|------|--------------------|----------------|---------------------|
+| Sandbox | 25 | 50 | 10 |
+| Starter | 100 | 200 | 25 |
+| Business | 500 | 1,000 | 100 |
+| Enterprise | Custom | Custom | Custom |
+
+### Rate Limit Headers
+
+Every API response includes rate limit information in the response headers:
+
+| Header | Description | Example |
+|--------|-------------|---------|
+| `Itpay-Rate-Limit-Limit` | Maximum requests per second | `100` |
+| `Itpay-Rate-Limit-Remaining` | Requests remaining in current window | `87` |
+| `Itpay-Rate-Limit-Reset` | Unix timestamp when the bucket refills | `1717000010` |
+| `Retry-After` | Seconds to wait before retrying (only on 429) | `3` |
+
+### Handling Rate Limits
+
+```python
+import time
+import requests
+
+def make_api_request(url, headers):
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 429:
+        retry_after = int(response.headers.get("Retry-After", 5))
+        logger.warning(
+            f"Rate limited. "
+            f"Retry after {retry_after}s. "
+            f"Remaining: {response.headers.get('Itpay-Rate-Limit-Remaining')}"
+        )
+        time.sleep(retry_after)
+        return make_api_request(url, headers)  # Retry
+
+    return response
+```
+
+### Rate Limiting Best Practices
+
+1. **Monitor the headers**: Track `Itpay-Rate-Limit-Remaining` to anticipate limits before they are hit.
+2. **Implement exponential backoff**: On `429` responses, sleep for `Retry-After` seconds plus jitter.
+3. **Avoid polling**: Use webhooks instead of polling for status updates.
+4. **Batch operations**: Use list endpoints with appropriate `limit` parameters instead of individual requests.
+5. **Distribute requests**: If you have multiple services, use separate API keys to avoid shared rate limits.
+6. **Cache responses**: Cache GET responses where appropriate to reduce request volume.
+
+### Rate Limit Violation Example
+
+```json
+{
+  "error": {
+    "type": "rate_limit_error",
+    "code": "rate_limit_exceeded",
+    "message": "Too many requests. Retry after 3 seconds.",
+    "param": null,
+    "doc_url": "https://docs.itpay.io/api/errors#rate_limit_exceeded",
+    "request_id": "req_4Fg7hJ2kL5nPq"
+  }
+}
+```
+
+## Best Practices for Error Handling
+
+### Client-Side Error Handling
+
+```python
+import requests
+from time import sleep
+from random import uniform
+
+def itpay_request(method, path, api_key, **kwargs):
+    """Make an ItPay API request with automatic error handling."""
+    headers = kwargs.pop("headers", {})
+    headers["Authorization"] = f"Bearer {api_key}"
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        response = requests.request(method, path, headers=headers, **kwargs)
+
+        if response.status_code in (200, 201):
+            return response.json()
+
+        error = response.json().get("error", {})
+
+        # Rate limit — retry with backoff
+        if error.get("type") == "rate_limit_error":
+            retry_after = int(response.headers.get("Retry-After", 2 ** attempt))
+            sleep(retry_after + uniform(0, 1))
+            continue
+
+        # Server error — retry with backoff
+        if error.get("type") == "api_error" and attempt < max_retries - 1:
+            sleep(2 ** attempt + uniform(0, 1))
+            continue
+
+        # All other errors — raise immediately
+        raise ItPayError(
+            type=error.get("type"),
+            code=error.get("code"),
+            message=error.get("message"),
+            param=error.get("param"),
+            request_id=error.get("request_id"),
+        )
+
+    raise ItPayError(type="api_error", code="max_retries_exceeded")
+
+class ItPayError(Exception):
+    def __init__(self, type, code, message, param=None, request_id=None):
+        self.type = type
+        self.code = code
+        self.message = message
+        self.param = param
+        self.request_id = request_id
+        super().__init__(message)
+```
+
+### Logging
+
+Always log error details for debugging while being careful not to log sensitive data:
+
+```python
+import logging
+
+logger = logging.getLogger("itpay")
+
+def handle_error(error):
+    logger.error(
+        "ItPay API error",
+        extra={
+            "error_type": error.get("type"),
+            "error_code": error.get("code"),
+            "request_id": error.get("request_id"),
+            # DO NOT log: api_key, full payload, customer PII
+        }
+    )
+```

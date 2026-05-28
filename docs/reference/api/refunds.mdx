@@ -1,0 +1,253 @@
+---
+title: Refunds API
+sidebar_label: Refunds
+description: Stripe-style API reference for refunds — create, retrieve, list, and cancel refunds with full parameter tables, response examples, and error codes.
+---
+
+# Refunds API
+
+The Refunds API allows you to process full and partial refunds against completed payment intents. Refunds are processed through the original payment channel when possible.
+
+## POST /v1/refunds
+
+Create a new refund against a payment intent.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `payment_intent_id` | string | yes | ID of the payment intent to refund |
+| `amount` | integer | no | Amount to refund in smallest currency unit. If omitted, the full amount is refunded |
+| `reason` | string | no | Reason for the refund (`customer_request`, `duplicate`, `fraudulent`, `service_cancellation`) |
+| `metadata` | object | no | Up to 20 key-value pairs of custom data |
+| `idempotency_key` | string | no | Idempotency key for safe retries |
+| `description` | string | no | Description of the refund |
+
+### Returns
+
+Returns a `Refund` object.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/refunds \
+  -H "Authorization: Bearer *** \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem_ref_001" \
+  -d '{
+    "payment_intent_id": "pi_abc123def456",
+    "amount": 1500,
+    "reason": "customer_request",
+    "metadata": {
+      "ticket_id": "TKT-45678"
+    }
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "ref_abc123def456",
+  "object": "refund",
+  "payment_intent_id": "pi_abc123def456",
+  "amount": 1500,
+  "currency": "USD",
+  "status": "succeeded",
+  "reason": "customer_request",
+  "metadata": {
+    "ticket_id": "TKT-45678"
+  },
+  "created": 1717094700,
+  "updated": 1717094715
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_amount` | Refund amount must be greater than 0 |
+| 400 | `exceeds_balance` | Refund amount exceeds the available balance on the payment intent |
+| 400 | `already_refunded` | The full amount of this payment intent has already been refunded |
+| 402 | `refund_failed` | The refund could not be processed by the payment provider |
+| 404 | `payment_intent_not_found` | No payment intent found with the given ID |
+| 409 | `payment_intent_not_succeeded` | Refund can only be created for succeeded payment intents |
+
+## GET /v1/refunds/:id
+
+Retrieve a refund by its ID.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the refund to retrieve |
+
+### Returns
+
+Returns a `Refund` object.
+
+### Example
+
+```bash
+curl https://api.itpay.io/v1/refunds/ref_abc123def456 \
+  -H "Authorization: Bearer sk_liv...n### Response
+
+```json
+{
+  "id": "ref_abc123def456",
+  "object": "refund",
+  "payment_intent_id": "pi_abc123def456",
+  "amount": 1500,
+  "currency": "USD",
+  "status": "succeeded",
+  "reason": "customer_request",
+  "failure_reason": null,
+  "metadata": {
+    "ticket_id": "TKT-45678"
+  },
+  "created": 1717094700,
+  "updated": 1717094715
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 404 | `refund_not_found` | No refund found with the given ID |
+
+## GET /v1/refunds
+
+List refunds with filtering and pagination.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | integer | no | Number of refunds to return (1-100, default: 10) |
+| `starting_after` | string | no | Cursor for pagination — return results after this ID |
+| `ending_before` | string | no | Cursor for pagination — return results before this ID |
+| `payment_intent_id` | string | no | Filter by payment intent ID |
+| `status` | string | no | Filter by status (`succeeded`, `pending`, `failed`, `canceled`) |
+| `created.gte` | integer | no | Unix timestamp — return refunds created at or after |
+| `created.lte` | integer | no | Unix timestamp — return refunds created at or before |
+
+### Returns
+
+Returns a list with `data`, `has_more`, and pagination cursors.
+
+### Example
+
+```bash
+curl "https://api.itpay.io/v1/refunds?limit=25&status=succeeded" \
+  -H "Authorization: Bearer sk_liv...n### Response
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "ref_abc123def456",
+      "object": "refund",
+      "payment_intent_id": "pi_abc123def456",
+      "amount": 1500,
+      "currency": "USD",
+      "status": "succeeded",
+      "reason": "customer_request",
+      "created": 1717094700
+    },
+    {
+      "id": "ref_ghi789jkl012",
+      "object": "refund",
+      "payment_intent_id": "pi_ghi789jkl012",
+      "amount": 2999,
+      "currency": "USD",
+      "status": "pending",
+      "reason": "duplicate",
+      "created": 1717094600
+    }
+  ],
+  "has_more": false,
+  "url": "/v1/refunds"
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `invalid_status` | Invalid status filter value |
+
+## POST /v1/refunds/:id/cancel
+
+Cancel a refund that is still in `pending` status.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | path | The ID of the refund to cancel |
+| `reason` | string | no | Reason for cancellation |
+
+### Returns
+
+Returns a `Refund` object with status set to `canceled`.
+
+### Example
+
+```bash
+curl -X POST https://api.itpay.io/v1/refunds/ref_abc123def456/cancel \
+  -H "Authorization: Bearer *** \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "manual_override"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "ref_abc123def456",
+  "object": "refund",
+  "payment_intent_id": "pi_abc123def456",
+  "amount": 1500,
+  "currency": "USD",
+  "status": "canceled",
+  "reason": "customer_request",
+  "cancellation_reason": "manual_override",
+  "created": 1717094700,
+  "updated": 1717094800
+}
+```
+
+### Errors
+
+| HTTP Status | Error Code | Description |
+|-------------|------------|-------------|
+| 400 | `cannot_cancel` | Refund can only be canceled while in `pending` status |
+| 404 | `refund_not_found` | No refund found with the given ID |
+
+## Refund Statuses
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Refund request has been submitted and is awaiting provider processing |
+| `succeeded` | Refund has been successfully processed |
+| `failed` | Refund processing failed |
+| `canceled` | Refund was canceled before processing completed |
+
+## Refund Limits
+
+- Refunds cannot exceed the total amount of the payment intent minus any previous refunds
+- A payment intent can be refunded multiple times as long as the total refunded amount does not exceed the original amount
+- Refunds are only available for payment intents in `succeeded` status
+- Refunds may take 3-10 business days to appear on the customer's statement, depending on the payment provider
+
+## Next Steps
+
+- Review [Payment Intents](/reference/api/payments) for creating payments
+- Configure [Webhooks](/reference/api/webhooks) for refund event notifications
+- Consult the [Error Codes](/reference/error-codes) reference for troubleshooting

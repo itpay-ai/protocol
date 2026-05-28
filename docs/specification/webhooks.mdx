@@ -1,0 +1,389 @@
+---
+sidebar_position: 5
+---
+
+# Webhooks
+
+## Overview
+
+Webhooks are HTTP callbacks that deliver real-time event notifications from the ItPay Protocol to your application. When an event occurs — such as a successful payment, a failed transaction, or a refund being issued — the protocol sends an HTTPS POST request with a structured JSON payload to a URL you configure.
+
+Webhooks are the primary mechanism for receiving asynchronous payment notifications. They are more reliable and performant than polling the API for status updates.
+
+### Webhook URL Configuration
+
+Configure webhook endpoints in the ItPay Dashboard or via the API:
+
+```
+POST /v1/webhook_endpoints
+{
+  "url": "https://api.example.com/itpay/webhooks",
+  "enabled_events": [
+    "payment_intent.succeeded",
+    "payment_intent.failed",
+    "refund.created"
+  ],
+  "description": "Production webhook receiver",
+  "api_version": "2026-05-01"
+}
+```
+
+- URLs MUST use HTTPS. HTTP endpoints are rejected.
+- Each endpoint can subscribe to a subset of event types.
+- A maximum of 10 webhook endpoints can be configured per account.
+- The `api_version` parameter determines the payload format version sent to this endpoint.
+
+## Webhook Format
+
+Every webhook POST request follows a standard envelope format.
+
+### Payload Structure
+
+```json
+{
+  "id": "evt_2Kc9x4mN7qRp8W",
+  "type": "payment_intent.succeeded",
+  "api_version": "2026-05-01",
+  "created": 1717000000,
+  "data": {
+    "object": {
+      "id": "pi_3Fg8hJ2kLm5nPq",
+      "amount": 2999,
+      "currency": "usd",
+      "status": "succeeded",
+      "merchant_id": "merch_9Xy2vB4nW7kR",
+      "customer_id": "cus_8Ab3cD5eF6gH",
+      "payment_method": "card_visa",
+      "metadata": {
+        "order_id": "ORD-12345",
+        "description": "Premium subscription - monthly"
+      },
+      "created": 1717000000
+    }
+  },
+  "livemode": false
+}
+```
+
+### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier for the event, prefixed `evt_` |
+| `type` | string | Event type identifier, dot-separated |
+| `api_version` | string | API version that generated this payload |
+| `created` | integer | Unix timestamp when the event occurred |
+| `data.object` | object | The object that the event is about |
+| `livemode` | boolean | `true` for production, `false` for test mode |
+| `pending_webhooks` | integer | Number of webhook delivery attempts queued (deprecated, removed in 2026-11-01) |
+
+### Headers
+
+Every webhook request includes the following HTTP headers:
+
+| Header | Description |
+|--------|-------------|
+| `Itpay-Signature` | HMAC-SHA256 signature for verification |
+| `Itpay-Webhook-Id` | The event ID (`evt_...`) |
+| `Itpay-Webhook-Timestamp` | Unix timestamp of event creation |
+| `Content-Type` | `application/json` |
+| `User-Agent` | `ItPay-Webhook/1.0` |
+
+## Signature Verification
+
+Every webhook request includes an HMAC-SHA256 signature that authenticates the payload. **Verification is REQUIRED for production use.** Failure to verify signatures exposes your application to forged events.
+
+### Verification Steps
+
+1. **Extract the signature header**: Parse the `Itpay-Signature` header to get the timestamp (`t`) and signature (`v1`).
+
+2. **Prepare the signed payload**: Concatenate the timestamp, a period (`.`), and the raw request body as a string:
+   ```
+   signed_payload = t + "." + raw_body_string
+   ```
+
+3. **Compute the expected signature**:
+   ```
+   expected = HMAC-SHA256(secret, signed_payload)
+   ```
+
+4. **Compare signatures**: Use a constant-time comparison function.
+
+5. **Verify the timestamp**: Ensure the timestamp is within ±5 minutes of the current time to prevent replay attacks.
+
+### Complete Verification Example
+
+```python
+import hmac
+import hashlib
+import time
+from typing import Tuple, Optional
+
+def verify_webhook(
+    payload: bytes,
+    signature_header: str,
+    secret: str,
+    tolerance_seconds: int = 300
+) -> Tuple[bool, Optional[str]]:
+    """
+    Verify an ItPay webhook event.
+
+    Args:
+        payload: Raw POST body as bytes.
+        signature_header: Value of the 'Itpay-Signature' header.
+        secret: Your webhook signing secret.
+        tolerance_seconds: Max allowed age of the event in seconds.
+
+    Returns:
+        Tuple of (is_valid, error_message).
+    """
+    try:
+        parts = {}
+        for pair in signature_header.split(","):
+            k, v = pair.strip().split("=", 1)
+            parts[k] = v
+
+        timestamp = parts.get("t")
+        signature = parts.get("v1")
+
+        if not timestamp or not signature:
+            return False, "Missing t or v1 in signature header"
+
+        # Check timestamp tolerance
+        current_time = int(time.time())
+        event_time = int(timestamp)
+        if abs(current_time - event_time) > tolerance_seconds:
+            return False, "Timestamp outside tolerance window"
+
+        # Compute expected signature
+        signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
+        expected = hmac.new(
+            key=secret.encode("utf-8"),
+            msg=signed_payload.encode("utf-8"),
+            digestmod=hashlib.sha256
+        ).hexdigest()
+
+        # Constant-time comparison
+        if not hmac.compare_digest(expected, signature):
+            return False, "Signature mismatch"
+
+        return True, None
+
+    except Exception as e:
+        return False, f"Verification failed: {str(e)}"
+```
+
+### Node.js Verification Example
+
+```javascript
+import crypto from "node:crypto";
+
+function verifyItPayWebhook(payload, signatureHeader, secret, tolerance = 300) {
+  const parts = Object.fromEntries(
+    signatureHeader.split(",").map((p) => p.trim().split("=", 2))
+  );
+  const { t: timestamp, v1: signature } = parts;
+  if (!timestamp || !signature) return { valid: false, error: "Missing header parts" };
+
+  // Check timestamp
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - parseInt(timestamp, 10)) > tolerance) {
+    return { valid: false, error: "Timestamp out of tolerance" };
+  }
+
+  const signedPayload = `${timestamp}.${payload}`;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(signedPayload)
+    .digest("hex");
+
+  const valid = crypto.timingSafeEqual(
+    Buffer.from(expected),
+    Buffer.from(signature)
+  );
+
+  return valid
+    ? { valid: true, error: null }
+    : { valid: false, error: "Signature mismatch" };
+}
+```
+
+## Retry Policy
+
+Webhook delivery follows an exponential backoff strategy with jitter to handle transient failures gracefully.
+
+### Retry Schedule
+
+| Attempt | Delay (seconds) | Cumulative Time |
+|---------|-----------------|-----------------|
+| 1 | 0 (immediate) | 0s |
+| 2 | ~5 (±1 jitter) | ~5s |
+| 3 | ~10 (±2 jitter) | ~15s |
+| 4 | ~20 (±4 jitter) | ~35s |
+| 5 | ~40 (±8 jitter) | ~75s |
+| 6 | ~80 (±16 jitter) | ~155s |
+| 7 | ~160 (±32 jitter) | ~315s |
+| 8 | ~300 (capped) | ~615s (~10 min) |
+| 9 | ~300 (capped) | ~915s (~15 min) |
+| 10 | ~300 (capped) | ~1,215s (~20 min) |
+
+### Retry Behavior
+
+- **Maximum attempts**: 10 retries over approximately 20 minutes.
+- **Status codes that trigger retry**: `408` (Request Timeout), `429` (Too Many Requests), and all `5xx` server errors.
+- **Success**: A `2xx` response (typically `200` or `204`) stops retries.
+- **No retry on**: `4xx` errors other than `408` and `429` — these indicate a problem with the webhook configuration that must be fixed manually.
+- **Timeout**: The protocol waits up to 5 seconds for a response. If no response is received, it counts as a failure.
+
+### Jitter Calculation
+
+Jitter uses a "full jitter" strategy to prevent thundering herd problems:
+
+```
+delay = min(cap, base * 2^attempt)
+jittered_delay = random(0, delay)
+```
+
+Where `base = 5` seconds, `cap = 300` seconds, and `attempt` starts at 0.
+
+### Disabled Endpoints
+
+After all retries are exhausted, the webhook endpoint is marked as **disabled**. Disabled endpoints do not receive future events until manually re-enabled. A notification is sent to the account owner.
+
+To re-enable: use the ItPay Dashboard or `POST /v1/webhook_endpoints/{id}/reactivate`.
+
+## Event Types
+
+### Payment Events
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `payment_intent.created` | A new payment intent was created | API call creating a PaymentIntent |
+| `payment_intent.succeeded` | Payment completed successfully | Payment confirmation by user |
+| `payment_intent.failed` | Payment failed (insufficient funds, declined, etc.) | Payment processing error |
+| `payment_intent.canceled` | Payment was canceled before completion | Merchant or user initiated cancel |
+| `payment_intent.processing` | Payment is being processed (async methods) | Async payment method initiation |
+| `payment_intent.requires_action` | Additional authentication required (3D Secure, etc.) | SCA challenge required |
+| `payment_intent.amount_captured` | Partial capture of an authorized payment | Capture of authorized amount |
+| `payment_intent.partially_funded` | Payment received partial funding (multi-currency) | Partial settlement |
+
+### Refund Events
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `refund.created` | A refund was initiated | Merchant creates a refund |
+| `refund.succeeded` | Refund completed successfully | Funds returned to payer |
+| `refund.failed` | Refund could not be processed | Insufficient balance, expired card |
+| `refund.updated` | Refund status changed | Internal processing update |
+
+### Checkout Events
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `checkout.session.completed` | Checkout session completed successfully | User completes checkout flow |
+| `checkout.session.expired` | Checkout session expired | Session TTL reached |
+| `checkout.session.async_payment_succeeded` | Async payment succeeded (e.g., bank transfer) | Funds received |
+| `checkout.session.async_payment_failed` | Async payment failed | Funds not received within window |
+
+### Webhook Endpoint Events
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `webhook_endpoint.enabled` | Webhook endpoint was enabled | Creation or re-activation |
+| `webhook_endpoint.disabled` | Webhook endpoint was disabled | Exhausted retries or manual disable |
+| `webhook_endpoint.updated` | Webhook endpoint configuration changed | URL or event filter update |
+| `webhook_endpoint.deleted` | Webhook endpoint was removed | Manual deletion |
+
+### Account Events
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `account.updated` | Account settings changed | Profile or payout method update |
+| `account.application.deauthorized` | Application access revoked | User revokes OAuth app |
+| `account.external_account.created` | New payout account added | Bank account or crypto wallet added |
+| `account.external_account.updated` | Payout account details changed | Account modification |
+| `account.external_account.deleted` | Payout account removed | Account removal |
+
+### Balance Events
+
+| Event Type | Description | Trigger |
+|------------|-------------|---------|
+| `balance.available` | New funds available for payout | Payment settlement completes |
+| `balance.pending` | Funds are pending settlement | Payment initiated, not yet settled |
+| `payout.created` | Payout initiated | Scheduled or manual payout |
+| `payout.succeeded` | Payout completed | Funds transferred |
+| `payout.failed` | Payout could not be completed | Bank rejection, network error |
+
+## Best Practices
+
+### Idempotency
+
+Webhook events may be delivered more than once due to network issues or retries. Your webhook handler MUST be idempotent.
+
+- Use the event `id` as a deduplication key. Store processed event IDs in a database with a unique constraint.
+- Check for existing event IDs before processing. If already processed, return a `200 OK` without performing any action.
+- Consider using a TTL on the deduplication store (e.g., 7 days) to limit storage requirements.
+
+```python
+# Idempotency check
+def handle_webhook(event):
+    if redis.sismember("processed_events", event["id"]):
+        return {"status": "already_processed"}, 200
+
+    # Process the event
+    process_event(event)
+
+    # Mark as processed
+    redis.sadd("processed_events", event["id"])
+    redis.expire("processed_events", 604800)  # 7 day TTL
+    return {"status": "ok"}, 200
+```
+
+### Ordering
+
+Webhook events for the same object may not arrive in chronological order in rare cases (e.g., after network partitions). Use the `created` timestamp (Unix seconds) within each event to determine the correct ordering.
+
+- Do not assume events arrive in creation order.
+- Use event timestamps rather than arrival time for state resolution.
+- For events on the same object, the event with the later `created` timestamp represents the more recent state.
+
+### Timeout Recommendations
+
+- Set your webhook endpoint to respond within **5 seconds**.
+- If processing takes longer (e.g., external API calls, email sending), defer work to a background job queue and respond immediately with `200 OK`.
+- Long-running responses trigger retries and may result in duplicate processing.
+
+```python
+from celery import Task
+
+def handle_webhook(request):
+    event = json.loads(request.body)
+    
+    # Defer processing to background task
+    process_webhook_event.delay(event)
+    
+    # Respond immediately
+    return JsonResponse({"status": "accepted"}, status=200)
+```
+
+### Security Best Practices
+
+- **Always verify signatures** — never disable signature verification in production.
+- **Use separate webhook secrets** for development and production environments.
+- **Restrict IP ranges** to ItPay's published webhook IP addresses (available in the docs or via API).
+- **Validate event types** — do not blindly trust the event type; validate it against expected values.
+- **Log webhook failures** for monitoring and alerting.
+
+### Monitoring
+
+- Track webhook delivery latency and failure rates in your monitoring system.
+- Set up alerts for webhook endpoint disablement.
+- Monitor the `webhook_endpoint.disabled` event to detect and respond to delivery issues promptly.
+- Use the ItPay Dashboard's webhook logs to inspect recent delivery attempts and raw payloads.
+
+### Testing
+
+- Use test mode (`livemode: false`) events to validate your webhook handler.
+- The ItPay Dashboard provides a **Send Test Webhook** button for any event type.
+- Use the `POST /v1/webhook_endpoints/{id}/test` endpoint to generate test events programmatically.
+- Simulate failures by returning non-`2xx` status codes in your development environment to verify retry behavior.

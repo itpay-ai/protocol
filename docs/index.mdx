@@ -1,0 +1,128 @@
+---
+slug: /
+sidebar_label: 'Overview'
+---
+
+# ItPay Protocol
+
+> **Specification version: 2025-06-01**
+> License: Apache 2.0
+
+## Overview
+
+The ItPay Protocol is a decentralized, channel-agnostic payment protocol that decouples payment orchestration from the underlying payment rails. It defines a canonical four-party model — **Payer**, **Payee**, **Channel**, and **Platform** — and a two-layer architecture that separates the core protocol semantics from the platform-specific integration layer.
+
+Unlike traditional payment protocols that are tightly coupled to a single payment method (e.g., card networks, bank transfers, mobile money), the ItPay Protocol provides a single abstraction that works across **QR code**, **payment link**, **invoice**, **NFC tap**, **wallet push**, and **crypto on-chain** channels. The protocol treats the payment channel as a pluggable adapter, enabling a Payee to offer any payment method without changing their integration surface.
+
+## Key Design Decisions
+
+### 1. Channel Agnosticism
+
+The protocol core defines no channel-specific behavior. All channel semantics — barcode generation, deep-link construction, NFC handshake sequences — are encapsulated in the **Channel Adapter** layer. This means a ServiceManifest configured for one channel works identically for any other channel the Platform supports.
+
+### 2. Service Manifest as Root Object
+
+Every payment interaction begins with a **ServiceManifest** — a digital representation of a merchant's intent to sell. The manifest describes the service being offered, the accepted channels, the price schedule, and the revocation policy. All derived objects (PaymentIntent, QRCharge, Invoice, Subscription) reference a single ServiceManifest.
+
+### 3. Two-Layer Design
+
+| Layer | Responsibility | Example Components |
+|-------|---------------|-------------------|
+| **Layer 1 — Protocol** | Core state machines, object definitions, webhook schemas, channel adapter interface | ServiceManifest, PaymentIntent, ChannelAdapter interface |
+| **Layer 2 — PaaS** | Platform-specific channel implementations, hosted UI, SDK libraries, compliance rules | ItPay Platform API, mobile SDK, dashboard, KYC module |
+
+This separation ensures that the protocol specification is implementation-agnostic while providing enough structure for interoperable implementations.
+
+### 4. State-Machine-Driven Lifecycle
+
+Each core object in the protocol follows a formal state machine. Transitions are triggered by authorized actors (Payer, Payee, Platform, Channel) and MUST emit typed webhook events. This makes integrations deterministic — every state has a known set of legal transitions and the webhook payload schema is fixed for each transition.
+
+### 5. Refund with Revocation
+
+The protocol introduces a unique **Refund with Revocation** flow that treats refunds as cryptographic revocation events. When a Platform processes a refund, it MUST emit an updated ServiceManifest with the refunded units revoked from the total. This prevents double-redemption and provides a tamper-evident audit trail.
+
+### 6. Deterministic Idempotency
+
+Every mutation request MUST include an `Idempotency-Key` header. The Platform MUST store the response of the first request for a given key and return it for all subsequent retries. This guarantees exactly-once semantics for payment operations even under network failures.
+
+## Four-Party Model
+
+The protocol defines exactly four roles that participate in every payment interaction:
+
+| Role | Definition | Examples |
+|------|-----------|---------|
+| **Payer** | The entity that provides value (fiat, crypto, token) in exchange for a service. Initiates the payment. | Customer, consumer, end-user |
+| **Payee** | The entity that receives value in exchange for delivering a service. Creates the ServiceManifest. | Merchant, creator, service provider |
+| **Channel** | The payment method or rail that transports value from Payer to Payee. Provides channel-specific characteristics (speed, cost, settlement guarantees). | Visa/Mastercard, Bitcoin Lightning, USDC on Solana, bank wire, mobile money (M-Pesa) |
+| **Platform** | The intermediary that orchestrates the interaction between the other three parties. Hosts the protocol implementation, provides the integration API, enforces compliance rules, and emits webhook events. | ItPay Platform, white-label payment processor |
+
+All four parties interact through well-defined API boundaries. No party has privileged access to another party's internal state. The Platform is the only party that observes the complete payment lifecycle across all channels.
+
+## Supported Channels
+
+The protocol defines a standard set of channel adapters. Each channel adapter implements the `ChannelAdapter` interface and is registered with the Platform at configuration time.
+
+| Channel | Type | Settlement Finality | Confirmation Mechanism | Fee Model |
+|---------|------|---------------------|----------------------|-----------|
+| QR Code | Off-chain + on-chain | Instant (off-chain) / Variable (on-chain) | Scan → Confirm → Settle | Fixed per scan |
+| Payment Link | Off-chain | Instant once Payer confirms | Click → Auth → Webhook | Per-link origination |
+| Invoice | Off-chain | Instant | Line-item approval → Pay | Per-invoice |
+| NFC Tap | Off-chain | Near-instant | Tap → Auth → Settle | Per-tap |
+| Wallet Push | Off-chain | Instant | Push notification → Swipe to pay | Per-push |
+| Crypto On-Chain | On-chain | Confirmation-dependent (6 blocks for BTC, finality for Solana) | Tx broadcast → Confirmation → Webhook | Gas-dependent + platform fee |
+| Deferred (BNPL) | Off-chain | At settlement date | Credit check → Approval → Schedule | Merchant discount fee |
+
+Each channel adapter MUST expose the following capabilities via the `ChannelCapabilities` registry:
+- `supportsRefund`: whether the channel can process refunds natively
+- `supportsSubscription`: whether recurring payments are supported
+- `settlementWindow`: the expected time from confirmation to funds available
+- `maxValue`: the maximum single-transaction value in satoshi units
+
+## Identity & Authentication
+
+All parties authenticate to the Platform using API keys scoped to their role. The protocol does not prescribe a specific identity system but mandates:
+
+1. **Payer authentication**: MAY be anonymous for QR/link channels; MUST be authenticated for subscription and deferred channels.
+2. **Payee authentication**: MUST present a valid API key signed by a Platform-recognized identity provider.
+3. **Channel authentication**: MUST present a channel registration token obtained during onboarding.
+4. **Platform authentication**: Platform responses MUST be signed with an HMAC-SHA256 key shared with the Payee for webhook verification.
+
+## Webhook Model
+
+All state transitions emit typed webhook events to the Payee's registered endpoint. Webhook payloads follow a uniform structure:
+
+```json
+{
+  "event": "payment_intent.settled",
+  "id": "evt_2xK3p9Qm8R",
+  "created": 1717084800,
+  "data": {
+    "object": { /* the affected protocol object */ },
+    "previous_state": "pending",
+    "current_state": "settled",
+    "transition": "settle"
+  }
+}
+```
+
+Webhooks MUST be delivered with at-least-once semantics. Payees MUST respond with HTTP 200 within 5 seconds; the Platform MAY retry up to 3 times with exponential backoff.
+
+## Security Model
+
+1. **Message integrity**: All API requests MUST use TLS 1.3 or higher.
+2. **Webhook verification**: HMAC-SHA256 signature in the `X-Signature` header computed over the raw request body.
+3. **Idempotency replay protection**: `Idempotency-Key` uniqueness window MUST be at least 24 hours.
+4. **Rate limiting**: Platforms SHOULD enforce per-API-key rate limits. Default: 1000 req/min for Payee keys, 100 req/min for Payer keys.
+5. **Data minimization**: Payment objects MUST NOT contain PII (personally identifiable information) beyond what is required for the channel adapter.
+
+## RFC 2119 Key Words Declaration
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this specification are to be interpreted as described in [RFC 2119](https://tools.ietf.org/html/rfc2119).
+
+- **MUST / REQUIRED / SHALL**: An absolute requirement of the specification.
+- **MUST NOT / SHALL NOT**: An absolute prohibition.
+- **SHOULD / RECOMMENDED**: A valid choice exists, but the recommended path MUST be followed unless there is a documented, well-justified reason to deviate.
+- **SHOULD NOT / NOT RECOMMENDED**: A behavior that is discouraged unless the specific circumstances provide a clear benefit.
+- **MAY / OPTIONAL**: A truly optional feature; implementations MAY choose to include or omit it.
+
+All subsequent sections of this specification use these keywords to define compliance requirements. A conforming implementation MUST satisfy all MUST-level requirements. A conforming implementation SHOULD satisfy all SHOULD-level requirements to claim full specification compliance.
